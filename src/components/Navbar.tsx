@@ -47,6 +47,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div>
             <span className="font-extrabold text-slate-900 text-base tracking-tight flex items-center gap-1.5">
               Comunicación Global
+              {currentView === 'coordinator' && (
+                <>
+                  <span className="text-slate-300 font-normal">·</span>
+                  <span className="text-slate-600 font-semibold text-xs sm:text-sm">Portal Empresa</span>
+                </>
+              )}
             </span>
             <span className="text-[10px] text-slate-500 block font-medium leading-none">
               Evaluaciones 360°
@@ -54,18 +60,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Center: Contextual Status Badge */}
+        {/* Center: Contextual Status Badge (only for non-coordinator views) */}
         <div className="hidden sm:flex items-center gap-2">
-          {currentView === 'coordinator' && activeCompany && (
-            <div className="flex items-center gap-2 px-3 py-1 bg-lime-50 text-slate-900 border border-lime-300 rounded-full text-xs font-semibold shadow-xs">
-              <Building2 className="w-3.5 h-3.5 text-lime-700" />
-              <span>{activeCompany.companyName}</span>
-              <span className="font-mono text-[10px] bg-white border border-lime-200 px-1.5 py-0.5 rounded-md font-bold text-slate-900">
-                {activeCompany.clientCode}
-              </span>
-            </div>
-          )}
-
           {currentView === 'evaluator' && (
             <div className="flex items-center gap-1.5 px-3 py-1 bg-lime-50 text-slate-900 border border-lime-300 rounded-full text-xs font-semibold shadow-xs">
               <UserCheck className="w-3.5 h-3.5 text-lime-700" />
@@ -82,15 +78,28 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Right Actions */}
-        <div className="flex items-center gap-2">
-          {/* If Coordinator is active, show exit company button */}
-          {currentView === 'coordinator' && (
-            <button
-              onClick={onLogoutCompany}
-              className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition font-medium"
-            >
-              Cambiar Empresa
-            </button>
+        <div className="flex items-center gap-3">
+          {/* If Coordinator is active, show discreet company badge and exit button */}
+          {currentView === 'coordinator' && activeCompany && (
+            <>
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-50 text-slate-700 border border-slate-200/90 rounded-full text-xs font-medium">
+                <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                <span className="font-bold text-slate-900">{activeCompany.companyName}</span>
+                <span className="text-slate-300">·</span>
+                <span className="font-mono text-[11px] text-slate-500 font-semibold">
+                  {activeCompany.clientCode}
+                </span>
+              </div>
+
+              <button
+                onClick={onLogoutCompany}
+                className="text-slate-500 hover:text-slate-800 text-xs sm:text-sm font-medium px-2.5 py-1.5 rounded-xl hover:bg-slate-100 transition flex items-center gap-1.5 cursor-pointer"
+                title="Cerrar sesión de empresa"
+              >
+                <LogOut className="w-4 h-4 text-slate-400" />
+                <span>Salir</span>
+              </button>
+            </>
           )}
 
           {/* If Evaluator is active, show back to home button */}

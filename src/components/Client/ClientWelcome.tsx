@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Building2, ArrowRight, ShieldCheck, QrCode, BarChart3, AlertCircle } from 'lucide-react';
-import { getCampaignByCode } from '../../services/dataService';
+import { getCampaignByCode, getCachedCampaignByCode } from '../../services/dataService';
 import { Campaign } from '../../types';
 
 interface ClientWelcomeProps {
@@ -19,8 +19,16 @@ export const ClientWelcome: React.FC<ClientWelcomeProps> = ({ onCompanyAuthentic
       return;
     }
 
-    setLoading(true);
     setErrorMsg('');
+
+    // Fast-path para empresas demo o en caché local (< 5ms)
+    const cached = getCachedCampaignByCode(trimmed);
+    if (cached) {
+      onCompanyAuthenticated(cached);
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const campaign = await getCampaignByCode(trimmed);

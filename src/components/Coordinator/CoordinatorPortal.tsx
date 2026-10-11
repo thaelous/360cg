@@ -18,10 +18,15 @@ import {
   FileSpreadsheet,
   Download,
   RefreshCw,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats } from '../../types';
 import {
   getCampaignByCode,
+  getCachedCampaignByCode,
+  getCachedSubjects,
+  getCachedResponses,
   getSubjects,
   getResponses,
   addSubject,
@@ -63,6 +68,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [excelSuccessMsg, setExcelSuccessMsg] = useState('');
+  const [isLinkCopied, setIsLinkCopied] = useState(false);
 
   // New subject form
   const [newSubject, setNewSubject] = useState({
@@ -79,6 +85,13 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   useEffect(() => {
     if (initialCampaign) {
       setCampaign(initialCampaign);
+      // Precarga instantánea desde memoria local (< 5ms)
+      const cachedSubs = getCachedSubjects(initialCampaign.id);
+      const cachedResps = getCachedResponses(initialCampaign.id);
+      if (cachedSubs.length > 0 || cachedResps.length > 0) {
+        setSubjects(cachedSubs);
+        setResponses(cachedResps);
+      }
       loadCampaignDetails(initialCampaign.id);
     } else if (initialCode) {
       loadCoordinatorData(initialCode);
@@ -86,8 +99,15 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   }, [initialCode, initialCampaign]);
 
   const loadCampaignDetails = async (campaignId: string) => {
-    setLoading(true);
+    // Si ya hay datos en caché local, no bloqueamos la interfaz
+    const cachedSubs = getCachedSubjects(campaignId);
+    const cachedResps = getCachedResponses(campaignId);
+    if (cachedSubs.length === 0 && cachedResps.length === 0) {
+      setLoading(true);
+    }
+
     try {
+      // Consultas paralelas optimizadas con Promise.all
       const [subs, resps] = await Promise.all([
         getSubjects(campaignId),
         getResponses(campaignId),
@@ -96,21 +116,38 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
       setResponses(resps);
     } catch (err) {
       console.error(err);
-      setErrorMsg('Error al conectar con la base de datos.');
+      if (cachedSubs.length === 0) {
+        setErrorMsg('Error al conectar con la base de datos.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const loadCoordinatorData = async (codeToSearch: string) => {
-    if (!codeToSearch.trim()) {
+    const trimmed = codeToSearch.trim().toUpperCase();
+    if (!trimmed) {
       setErrorMsg('Por favor ingresa un código de empresa.');
       return;
     }
-    setLoading(true);
     setErrorMsg('');
+
+    // Fast-path para empresas demo o cacheadas: respuesta instantánea (< 200ms)
+    const cachedCamp = getCachedCampaignByCode(trimmed);
+    if (cachedCamp) {
+      setCampaign(cachedCamp);
+      const cachedSubs = getCachedSubjects(cachedCamp.id);
+      const cachedResps = getCachedResponses(cachedCamp.id);
+      if (cachedSubs.length > 0 || cachedResps.length > 0) {
+        setSubjects(cachedSubs);
+        setResponses(cachedResps);
+      }
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const camp = await getCampaignByCode(codeToSearch.trim());
+      const camp = await getCampaignByCode(trimmed);
       if (!camp) {
         setErrorMsg(`No se encontró ninguna empresa con el código "${codeToSearch}".`);
         setLoading(false);
@@ -237,8 +274,87 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
     setIsShareModalOpen(true);
   };
 
+  const handleCopyBroadcastLink = () => {
+    if (!campaign) return;
+    const origin = window.location.origin;
+    const codeParam = campaign.clientCode || campaign.id;
+    const link = `${origin}/?campana=${encodeURIComponent(codeParam)}`;
+    navigator.clipboard.writeText(link);
+    setIsLinkCopied(true);
+    setTimeout(() => setIsLinkCopied(false), 2500);
+  };
+
   // If not logged in with client code
   if (!campaign) {
+    if (loading) {
+      return (
+        <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
+          {/* Barra de progreso verde lima de respuesta inmediata */}
+          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden shadow-xs">
+            <div className="bg-lime-500 h-full w-2/3 rounded-full animate-pulse transition-all"></div>
+          </div>
+
+          {/* Skeleton Hero Card */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-3 w-full max-w-xl">
+                <div className="h-8 bg-slate-200 rounded-xl w-3/4 animate-pulse"></div>
+                <div className="flex gap-2">
+                  <div className="h-5 bg-emerald-100/70 rounded-full w-28 animate-pulse"></div>
+                  <div className="h-5 bg-slate-100 rounded-full w-32 animate-pulse"></div>
+                </div>
+                <div className="h-4 bg-slate-100 rounded-lg w-full animate-pulse"></div>
+              </div>
+              <div className="flex gap-2">
+                <div className="h-10 bg-lime-200/60 rounded-xl w-44 animate-pulse"></div>
+                <div className="h-10 bg-slate-100 rounded-xl w-36 animate-pulse"></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Skeleton KPI Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-white rounded-2xl p-5 border border-slate-200/70 shadow-xs space-y-3">
+                <div className="flex justify-between">
+                  <div className="h-4 bg-slate-100 rounded w-24 animate-pulse"></div>
+                  <div className="h-7 w-7 bg-slate-100 rounded-lg animate-pulse"></div>
+                </div>
+                <div className="h-7 bg-slate-200 rounded w-16 animate-pulse"></div>
+                <div className="h-3 bg-slate-100 rounded w-32 animate-pulse"></div>
+              </div>
+            ))}
+          </div>
+
+          {/* Skeleton Table */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-100">
+              <div className="h-6 bg-slate-200 rounded w-48 animate-pulse"></div>
+              <div className="h-8 bg-slate-100 rounded-xl w-60 animate-pulse"></div>
+            </div>
+            <div className="space-y-3 pt-2">
+              {[1, 2, 3].map((row) => (
+                <div key={row} className="flex items-center justify-between p-3.5 bg-slate-50/60 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-slate-200 animate-pulse"></div>
+                    <div className="space-y-1.5">
+                      <div className="h-4 bg-slate-200 rounded w-40 animate-pulse"></div>
+                      <div className="h-3 bg-slate-100 rounded w-24 animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="h-8 bg-slate-200/60 rounded-xl w-32 animate-pulse"></div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-center gap-2 text-slate-500 text-xs font-semibold pt-3">
+              <RefreshCw className="w-3.5 h-3.5 text-lime-600 animate-spin" />
+              <span>Cargando datos empresariales...</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="max-w-md mx-auto py-12 px-4">
         <div className="bg-white rounded-3xl shadow-xl border border-slate-200/80 p-8 text-center space-y-6">
@@ -339,372 +455,434 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 space-y-6 print:py-0 print:px-0 print:max-w-none">
-      {/* Screen-Only Coordinator Dashboard */}
-      <div className="space-y-6 print:hidden">
-        {/* Top Banner / Company Header */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 bg-blue-50 text-blue-700 font-mono font-bold text-xs rounded-full border border-blue-200">
-              {campaign.clientCode}
-            </span>
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                campaign.status === 'active'
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : 'bg-rose-100 text-rose-800 border border-rose-300'
-              }`}
-            >
-              {campaign.status === 'active' ? '● Campaña Activa' : '● Campaña Cerrada'}
-            </span>
-            {campaign.deadline && (
-              <span className="text-xs text-slate-400 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                Cierre: {campaign.deadline}
-              </span>
-            )}
-          </div>
-
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
-            {campaign.companyName}
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-2xl">
-            {campaign.description || 'Gestión centralizada del proceso de evaluación de desempeño 360°'}
-          </p>
-        </div>
-
-        {/* Global Action buttons */}
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {/* BOTÓN DESTACADO: REPORTE MAESTRO EN EXCEL */}
-          <button
-            onClick={handleDownloadMasterExcel}
-            disabled={isExportingExcel || responses.length === 0}
-            className="bg-lime-500 hover:bg-lime-600 disabled:opacity-50 disabled:hover:bg-lime-500 text-slate-900 font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition border border-lime-400 cursor-pointer disabled:cursor-not-allowed"
-            title={
-              responses.length > 0
-                ? `Descargar Reporte Maestro en Excel (${responses.length} evaluaciones consolidadas)`
-                : 'Esperando evaluaciones para generar el reporte maestro en Excel'
-            }
-          >
-            {isExportingExcel ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin text-slate-900 shrink-0" />
-                <span>Generando Excel...</span>
-              </>
-            ) : (
-              <>
-                <FileSpreadsheet className="w-4 h-4 text-slate-950 shrink-0" />
-                <span>Descargar Reporte Maestro en Excel</span>
-                {responses.length > 0 && (
-                  <span className="ml-1 text-[11px] bg-slate-900 text-lime-400 px-1.5 py-0.5 rounded-md font-mono font-bold">
-                    {responses.length}
-                  </span>
-                )}
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={() => setIsExportModalOpen(true)}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-lime-400 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition border border-slate-700 cursor-pointer"
-            title="Exportar métricas y respuestas a Excel o CSV"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-lime-400" />
-            Exportar CSV / Excel
-          </button>
-
-          <button
-            onClick={() => handleOpenShare()}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-lime-50 text-slate-900 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition border border-slate-300 hover:border-lime-400 cursor-pointer"
-          >
-            <QrCode className="w-4 h-4 text-lime-700" />
-            Código QR de Campaña
-          </button>
-
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition border border-slate-300 cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4 stroke-[2.5]" />
-            Registrar Evaluado
-          </button>
-
-          <button
-            onClick={() => {
-              setCampaign(null);
-              setClientCode('');
-              if (onLogout) onLogout();
-            }}
-            className="px-3 py-2.5 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition font-medium cursor-pointer"
-            title="Cerrar sesión de empresa"
-          >
-            Cerrar sesión
-          </button>
-        </div>
-      </div>
-
-      {excelSuccessMsg && (
-        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-3 text-emerald-900 text-xs shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-700">
-              <CheckCircle className="w-4 h-4" />
-            </div>
-            <div>
-              <strong className="block font-bold">Archivo Súper Maestro de Resultados Descargado</strong>
-              <span className="text-slate-600">{excelSuccessMsg}</span>
-            </div>
-          </div>
-          <button
-            onClick={() => setExcelSuccessMsg('')}
-            className="px-2.5 py-1 text-emerald-700 hover:bg-emerald-100 rounded-lg font-bold cursor-pointer"
-          >
-            Entendido
-          </button>
+      {/* Barra de progreso superior en verde lima para respuesta inmediata */}
+      {loading && (
+        <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden -mt-2">
+          <div className="bg-gradient-to-r from-lime-500 to-emerald-500 h-full w-full rounded-full animate-pulse transition-all"></div>
         </div>
       )}
 
-      {/* Progress & Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <span className="text-xs text-slate-500 font-medium block">Colaboradores Registrados</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-3xl font-black text-slate-900">{subjects.length}</span>
-            <span className="text-xs text-slate-400">personas</span>
-          </div>
-          <span className="text-[11px] text-lime-700 font-bold mt-1 block">Sujetos evaluados</span>
-        </div>
+      {/* Screen-Only Coordinator Dashboard */}
+      <div className="space-y-6 print:hidden">
+        {/* 1. HERO DE CAMPAÑA: Cabecera Ejecutiva en Dos Niveles (Espaciosa y sin Empalmes) */}
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm">
+          {/* Nivel Superior: Fila de Título a lo ancho completo */}
+          <div className="w-full space-y-2">
+            <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-3">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight break-words">
+                {campaign.companyName || (campaign as any).name || 'Empresa'}
+              </h1>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <span className="text-xs text-slate-500 font-medium block">Evaluaciones Recibidas</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-3xl font-black text-slate-900">{totalReceivedEvaluations}</span>
-            <span className="text-xs text-slate-400">de ~{totalTargetEvaluations} meta</span>
-          </div>
-          <span className="text-[11px] text-slate-500 mt-1 block">En tiempo real en Firestore</span>
-        </div>
+              {/* Badges informativos en una sola línea */}
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {/* Estado: Campaña Activa */}
+                <span
+                  className={`text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5 ${
+                    campaign.status === 'active'
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      campaign.status === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                    }`}
+                  />
+                  {campaign.status === 'active' ? 'Campaña Activa' : 'Campaña Cerrada'}
+                </span>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <span className="text-xs text-slate-500 font-medium block">Avance de Campaña</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-3xl font-black text-slate-900">{overallPercentage}%</span>
-          </div>
-          <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden mt-2">
-            <div
-              className="bg-lime-500 h-full rounded-full transition-all duration-500"
-              style={{ width: `${overallPercentage}%` }}
-            />
-          </div>
-        </div>
+                {/* Código: CORP-2026-X */}
+                <span className="bg-slate-50 text-slate-600 border border-slate-200 font-mono text-xs px-2.5 py-1 rounded-full font-semibold">
+                  Código: {campaign.clientCode}
+                </span>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <span className="text-xs text-slate-500 font-medium block">Enlace de Difusión</span>
-          <p className="text-xs font-mono text-slate-600 truncate mt-1">
-            ?code={campaign.clientCode}
-          </p>
-          <button
-            onClick={() => handleOpenShare()}
-            className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 mt-2"
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            Copiar enlace para el equipo
-          </button>
-        </div>
-      </div>
-
-      {/* Main Subjects Table & Management */}
-      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
-        {/* Table header bar */}
-        <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-600" />
-              Personas a Evaluar en {campaign.companyName}
-            </h2>
-            <p className="text-xs text-slate-500">
-              Genera códigos QR específicos o analiza los resultados individuales de cada colaborador
-            </p>
-          </div>
-
-          <div className="relative w-full sm:w-64">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              placeholder="Buscar colaborador..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* Subjects List */}
-        {filteredSubjects.length === 0 ? (
-          <div className="p-12 text-center space-y-3">
-            <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
-              <Users className="w-6 h-6" />
+                {/* Fecha de corte: Cierre: YYYY-MM-DD */}
+                {campaign.deadline && (
+                  <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                    Cierre: {campaign.deadline}
+                  </span>
+                )}
+              </div>
             </div>
-            <p className="text-sm font-semibold text-slate-700">No se encontraron colaboradores</p>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              {searchTerm
-                ? 'Prueba con otro término de búsqueda.'
-                : 'Registra a la primera persona a evaluar para comenzar a recibir feedback 360°.'}
+
+            {/* Descripción en texto gris suave */}
+            <p className="text-slate-500 text-sm max-w-3xl mt-1.5 leading-relaxed">
+              {campaign.description || 'Gestión centralizada del proceso de evaluación de desempeño 360°'}
             </p>
-            {!searchTerm && (
+          </div>
+
+          {/* Nivel Inferior: Barra de Acciones Ejecutiva */}
+          <div className="pt-4 mt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            {/* Lado izquierdo: Botón principal destacado */}
+            <button
+              onClick={handleDownloadMasterExcel}
+              disabled={isExportingExcel || responses.length === 0}
+              className="bg-lime-500 hover:bg-lime-600 disabled:opacity-50 disabled:hover:bg-lime-500 text-slate-950 font-bold px-5 py-2.5 rounded-xl shadow-sm flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed transition"
+              title={
+                responses.length > 0
+                  ? `Descargar Reporte Maestro en Excel (${responses.length} evaluaciones consolidadas)`
+                  : 'Esperando evaluaciones para generar el reporte maestro'
+              }
+            >
+              {isExportingExcel ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-slate-950 shrink-0" />
+                  <span>Generando Excel...</span>
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="w-4 h-4 text-slate-950 shrink-0" />
+                  <span>Descargar Reporte Maestro (.xlsx)</span>
+                  {responses.length > 0 && (
+                    <span className="ml-1 text-[11px] bg-slate-950 text-lime-400 px-1.5 py-0.5 rounded-md font-mono font-bold">
+                      {responses.length}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+
+            {/* Lado derecho: Botones secundarios ordenados */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={() => handleOpenShare()}
+                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
+              >
+                <QrCode className="w-4 h-4 text-slate-700" />
+                <span>Código QR de Campaña</span>
+              </button>
+
               <button
                 onClick={() => setIsAddModalOpen(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+                className="bg-slate-900 hover:bg-black text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
               >
                 <UserPlus className="w-4 h-4" />
-                Registrar primer evaluado
+                <span>+ Registrar Colaborador</span>
               </button>
-            )}
+            </div>
           </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {filteredSubjects.map((sub) => {
-              const subResponses = responses.filter((r) => r.subjectId === sub.id);
-              const target = sub.targetEvaluators || 5;
-              const percent = Math.min(100, Math.round((subResponses.length / target) * 100));
+        </div>
 
-              // Breakdown counts
-              const selfCount = subResponses.filter((r) => r.evaluatorRole === 'self').length;
-              const mgrCount = subResponses.filter((r) => r.evaluatorRole === 'manager').length;
-              const peerCount = subResponses.filter((r) => r.evaluatorRole === 'peer').length;
-              const subCount = subResponses.filter((r) => r.evaluatorRole === 'subordinate').length;
+        {/* Notificación flotante / inline de éxito en descarga de Excel */}
+        {excelSuccessMsg && (
+          <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-3 text-emerald-900 text-xs shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-700">
+                <CheckCircle className="w-4 h-4" />
+              </div>
+              <div>
+                <strong className="block font-bold">Archivo Maestro de Resultados Descargado</strong>
+                <span className="text-slate-600">{excelSuccessMsg}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setExcelSuccessMsg('')}
+              className="px-2.5 py-1 text-emerald-700 hover:bg-emerald-100 rounded-lg font-bold cursor-pointer"
+            >
+              Entendido
+            </button>
+          </div>
+        )}
 
-              return (
+        {/* 3. TARJETAS KPI DE MÉTRICAS CLAVE (Estilo Dashboard Ejecutivo) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* KPI 1: Colaboradores Evaluados */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Colaboradores Evaluados</span>
+                <span className="p-1.5 bg-slate-100 text-slate-600 rounded-lg">
+                  <Users className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2 mt-2">
+                <span className="text-3xl font-black text-slate-900">{subjects.length}</span>
+                <span className="text-xs text-slate-400">registrados</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-100">
+              Total activos en la campaña
+            </p>
+          </div>
+
+          {/* KPI 2: Evaluaciones Completadas */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Evaluaciones Completadas</span>
+                <span className="p-1.5 bg-lime-50 text-lime-700 rounded-lg">
+                  <CheckCircle className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2 mt-2">
+                <span className="text-3xl font-black text-slate-900">{totalReceivedEvaluations}</span>
+                <span className="text-xs text-slate-400">de {totalTargetEvaluations} meta</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-100">
+              Respuestas consolidadas en vivo
+            </p>
+          </div>
+
+          {/* KPI 3: Tasa de Participación (%) */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Tasa de Participación</span>
+                <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+                  <BarChart3 className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2 mt-2">
+                <span className="text-3xl font-black text-slate-900">{overallPercentage}%</span>
+              </div>
+              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-3">
                 <div
-                  key={sub.id}
-                  className="p-5 hover:bg-slate-50/70 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                >
-                  {/* Left: User identity */}
-                  <div className="flex items-start gap-3.5 min-w-[260px]">
-                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-xs">
-                      {sub.name.charAt(0)}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-slate-900 text-sm">{sub.name}</h3>
-                      <p className="text-xs text-slate-600 font-medium">{sub.role}</p>
-                      <span className="inline-block text-[11px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md mt-0.5">
-                        {sub.department}
-                      </span>
-                    </div>
-                  </div>
+                  className="bg-lime-500 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${overallPercentage}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-3 pt-2 border-t border-slate-100">
+              {overallPercentage >= 100 ? 'Meta global completada' : 'Progreso respecto a la meta'}
+            </p>
+          </div>
 
-                  {/* Middle: Progress and roles breakdown */}
-                  <div className="flex-1 max-w-md space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-700">
-                        {subResponses.length} de {target} evaluaciones ({percent}%)
-                      </span>
-                      {percent >= 100 && (
-                        <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5" /> Meta lograda
+          {/* KPI 4: Enlace Directo de Difusión con Copiado Rápido */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Enlace Directo de Difusión</span>
+                <span className="p-1.5 bg-slate-100 text-slate-600 rounded-lg">
+                  <Share2 className="w-4 h-4" />
+                </span>
+              </div>
+              <p className="text-xs font-mono text-slate-600 truncate mt-2 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg">
+                /?campana={campaign.clientCode}
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-100">
+              <button
+                onClick={handleCopyBroadcastLink}
+                className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                  isLinkCopied
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                }`}
+              >
+                {isLinkCopied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>¡Enlace Copiado!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Copiar Enlace</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. TABLA DE COLABORADORES (Diseño SaaS Corporativo Sin Saturación) */}
+        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+          {/* Table header bar */}
+          <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-slate-700" />
+                Colaboradores y Estado de Evaluaciones
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Seguimiento en tiempo real del progreso de evaluación 360° por colaborador
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-medium text-slate-500 hidden sm:inline">
+                {filteredSubjects.length} {filteredSubjects.length === 1 ? 'colaborador' : 'colaboradores'}
+              </span>
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Buscar colaborador..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Subjects List */}
+          {filteredSubjects.length === 0 ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
+                <Users className="w-6 h-6" />
+              </div>
+              <p className="text-sm font-semibold text-slate-700">No se encontraron colaboradores</p>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                {searchTerm
+                  ? 'Prueba con otro término de búsqueda.'
+                  : 'Registra a la primera persona a evaluar para comenzar a recibir feedback 360°.'}
+              </p>
+              {!searchTerm && (
+                <button
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="px-4 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Registrar primer colaborador
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {filteredSubjects.map((sub) => {
+                const subResponses = responses.filter((r) => r.subjectId === sub.id);
+                const target = sub.targetEvaluators || 5;
+                const percent = Math.min(100, Math.round((subResponses.length / target) * 100));
+
+                // Breakdown counts
+                const selfCount = subResponses.filter((r) => r.evaluatorRole === 'self').length;
+                const mgrCount = subResponses.filter((r) => r.evaluatorRole === 'manager').length;
+                const peerCount = subResponses.filter((r) => r.evaluatorRole === 'peer').length;
+                const subCount = subResponses.filter((r) => r.evaluatorRole === 'subordinate').length;
+
+                return (
+                  <div
+                    key={sub.id}
+                    className="p-5 hover:bg-slate-50/60 transition flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                  >
+                    {/* Columna 1: Colaborador */}
+                    <div className="flex items-center gap-3.5 min-w-[260px]">
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-800 font-bold text-sm flex items-center justify-center border border-slate-200/80 shrink-0">
+                        {sub.name.charAt(0)}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-sm leading-tight">{sub.name}</h3>
+                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                          {sub.role} · <span className="text-slate-400">{sub.department}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Columna 2: Progreso y Rol */}
+                    <div className="flex-1 max-w-md space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-700">
+                          {subResponses.length} de {target} evaluaciones ({percent}%)
+                        </span>
+                      </div>
+
+                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            percent >= 100 ? 'bg-lime-500' : 'bg-slate-900'
+                          }`}
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+
+                      {/* Desglose sutil de roles */}
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px] text-slate-500">
+                        <span>Auto: <strong className="text-slate-700 font-semibold">{selfCount}</strong></span>
+                        <span className="text-slate-300">·</span>
+                        <span>Jefe: <strong className="text-slate-700 font-semibold">{mgrCount}</strong></span>
+                        <span className="text-slate-300">·</span>
+                        <span>Pares: <strong className="text-slate-700 font-semibold">{peerCount}</strong></span>
+                        <span className="text-slate-300">·</span>
+                        <span>Colab: <strong className="text-slate-700 font-semibold">{subCount}</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Columna 3: Estado */}
+                    <div className="shrink-0">
+                      {percent >= 100 ? (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          Completado
+                        </span>
+                      ) : subResponses.length > 0 ? (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 inline-flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-blue-600" />
+                          En progreso
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200 inline-flex items-center gap-1.5">
+                          Sin iniciar
                         </span>
                       )}
                     </div>
 
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          percent >= 100 ? 'bg-emerald-500' : 'bg-blue-600'
-                        }`}
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
+                    {/* Columna 4: Acciones Limpias y Unificadas */}
+                    <div className="flex items-center gap-2 shrink-0 pt-2 lg:pt-0">
+                      {/* Ver Informe (botón primario sutil) */}
+                      <button
+                        onClick={() => handleOpenReport(sub)}
+                        disabled={subResponses.length === 0}
+                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed"
+                        title={subResponses.length > 0 ? 'Ver informe 360° en pantalla' : 'Esperando primeras respuestas'}
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        <span>Ver Informe</span>
+                      </button>
 
-                    {/* Roles mini badges */}
-                    <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px]">
-                      <span
-                        className={`px-1.5 py-0.5 rounded border font-medium ${
-                          selfCount > 0 ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}
+                      {/* Descargar PDF (icono discreto) */}
+                      <button
+                        onClick={() => handleDownloadReport(sub)}
+                        disabled={subResponses.length === 0}
+                        className="p-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium transition cursor-pointer disabled:cursor-not-allowed"
+                        title={
+                          subResponses.length > 0
+                            ? 'Descargar reporte individual en PDF'
+                            : 'Esperando evaluaciones para generar el reporte'
+                        }
+                        aria-label="Descargar PDF"
                       >
-                        Auto: {selfCount}
-                      </span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded border font-medium ${
-                          mgrCount > 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* QR Individual */}
+                      <button
+                        onClick={() => handleOpenShare(sub)}
+                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                        title="Generar código QR individual"
+                        aria-label="Código QR"
                       >
-                        Jefe: {mgrCount}
-                      </span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded border font-medium ${
-                          peerCount > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}
+                        <QrCode className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Probar Evaluar */}
+                      <button
+                        onClick={() => onLaunchEvaluation(campaign.clientCode, sub.id)}
+                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                        title="Probar cuestionario de evaluación"
+                        aria-label="Probar evaluar"
                       >
-                        Pares: {peerCount}
-                      </span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded border font-medium ${
-                          subCount > 0 ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-slate-50 text-slate-400 border-slate-200'
-                        }`}
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Eliminar (papelera discreta) */}
+                      <button
+                        onClick={() => handleDeleteSubject(sub.id, sub.name)}
+                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                        title="Eliminar colaborador"
+                        aria-label="Eliminar"
                       >
-                        Colab: {subCount}
-                      </span>
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-
-                  {/* Right: Actions */}
-                  <div className="flex flex-wrap items-center gap-2 shrink-0 pt-2 lg:pt-0">
-                    <button
-                      onClick={() => handleDownloadReport(sub)}
-                      disabled={subResponses.length === 0}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-slate-900 text-lime-400 border border-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:cursor-not-allowed"
-                      title={
-                        subResponses.length > 0
-                          ? 'Download Report (PDF) - Descargar reporte oficial con resumen de calificaciones'
-                          : 'Esperando evaluaciones para generar el reporte'
-                      }
-                      aria-label="Download Report"
-                    >
-                      <Download className="w-3.5 h-3.5 text-lime-400 shrink-0" />
-                      <span>Download Report</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleOpenReport(sub)}
-                      disabled={subResponses.length === 0}
-                      className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed"
-                      title={subResponses.length > 0 ? 'Ver informe 360° en pantalla' : 'Esperando primeras respuestas'}
-                    >
-                      <BarChart3 className="w-3.5 h-3.5" />
-                      <span>Reporte 360°</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleOpenShare(sub)}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                      title="Generar QR específico para evaluar a esta persona"
-                    >
-                      <QrCode className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>QR Directo</span>
-                    </button>
-
-                    <button
-                      onClick={() => onLaunchEvaluation(campaign.clientCode, sub.id)}
-                      className="px-2.5 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg text-xs font-medium transition flex items-center gap-1 cursor-pointer"
-                      title="Probar responder encuesta para esta persona"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Evaluar</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleDeleteSubject(sub.id, sub.name)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                      title="Eliminar colaborador"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* MODAL: REGISTRAR NUEVO EVALUADO */}

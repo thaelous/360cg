@@ -23,22 +23,13 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Compute evaluation link URL
+  // Estandarización de URL de evaluación
   const origin = window.location.origin;
-  const basePath = window.location.pathname.replace(/\/$/, '');
-  const params = new URLSearchParams();
-  if (subject) {
-    params.set('evaluar', subject.id);
-    params.set('id', subject.id);
-    params.set('campana', campaign.clientCode);
-    params.set('empresa', campaign.clientCode);
-    params.set('code', campaign.clientCode);
-  } else {
-    params.set('campana', campaign.clientCode);
-    params.set('empresa', campaign.clientCode);
-    params.set('code', campaign.clientCode);
-  }
-  const fullShareUrl = `${origin}${basePath}?${params.toString()}`;
+  const campParam = campaign.clientCode || campaign.id;
+  const evalUrl = subject?.id
+    ? `${origin}/?campana=${encodeURIComponent(campParam)}&evaluar=${encodeURIComponent(subject.id)}`
+    : `${origin}/?campana=${encodeURIComponent(campParam)}`;
+  const fullShareUrl = evalUrl;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(fullShareUrl);

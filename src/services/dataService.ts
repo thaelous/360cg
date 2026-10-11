@@ -456,6 +456,21 @@ export async function resetToMockData() {
   }
 }
 
+// CACHED INSTANT GETTERS FOR ZERO-LATENCY DEMO DATA & VIEWS
+export function getCachedCampaignByCode(clientCode: string): Campaign | null {
+  const trimmed = clientCode.trim().toUpperCase();
+  const localList = getLocalCampaigns();
+  return localList.find((c) => c.clientCode.toUpperCase() === trimmed) || null;
+}
+
+export function getCachedSubjects(campaignId: string): EvaluatedSubject[] {
+  return getLocalSubjects().filter((s) => s.campaignId === campaignId);
+}
+
+export function getCachedResponses(campaignId: string): EvaluationResponse[] {
+  return getLocalResponses().filter((r) => r.campaignId === campaignId);
+}
+
 // CAMPAIGN METHODS
 export async function getCampaigns(): Promise<Campaign[]> {
   const db = getFirebaseDb();
@@ -464,7 +479,9 @@ export async function getCampaigns(): Promise<Campaign[]> {
       const colRef = collection(db, 'campaigns');
       const snap = await getDocs(colRef);
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign));
+        const fetched = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign));
+        saveLocalCampaigns(fetched);
+        return fetched;
       } else {
         // Auto-seed to Firestore so the user's project is populated
         await seedMockDataToFirestore(db);
@@ -479,6 +496,30 @@ export async function getCampaigns(): Promise<Campaign[]> {
 
 export async function getCampaignByCode(clientCode: string): Promise<Campaign | null> {
   const trimmed = clientCode.trim().toUpperCase();
+
+  // 1. FAST-PATH: Retorno instantáneo (< 200ms) para empresas demo y datos locales en memoria
+  const cached = getCachedCampaignByCode(trimmed);
+  if (cached) {
+    // Sincronización en segundo plano sin bloquear la experiencia del usuario
+    if (shouldUseFirebase()) {
+      const db = getFirebaseDb();
+      if (db) {
+        getDocs(query(collection(db, 'campaigns'), where('clientCode', '==', trimmed)))
+          .then((snap) => {
+            if (!snap.empty) {
+              const d = snap.docs[0];
+              const remote = { id: d.id, ...d.data() } as Campaign;
+              const all = getLocalCampaigns().filter((c) => c.id !== remote.id);
+              saveLocalCampaigns([remote, ...all]);
+            }
+          })
+          .catch((e) => console.warn('Background campaign sync note:', e));
+      }
+    }
+    return cached;
+  }
+
+  // 2. Consulta en Firestore si no está en caché local
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
@@ -486,7 +527,10 @@ export async function getCampaignByCode(clientCode: string): Promise<Campaign | 
       const snap = await getDocs(q);
       if (!snap.empty) {
         const d = snap.docs[0];
-        return { id: d.id, ...d.data() } as Campaign;
+        const remote = { id: d.id, ...d.data() } as Campaign;
+        const all = getLocalCampaigns().filter((c) => c.id !== remote.id);
+        saveLocalCampaigns([remote, ...all]);
+        return remote;
       }
     } catch (err) {
       console.warn('Firebase error querying by code, falling back to local storage', err);
@@ -499,21 +543,27 @@ export async function getCampaignByCode(clientCode: string): Promise<Campaign | 
 }
 
 export async function getCampaignById(id: string): Promise<Campaign | null> {
+  // Fast path local
+  const localList = getLocalCampaigns();
+  const localFound = localList.find((c) => c.id === id);
+  if (localFound) return localFound;
+
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
       const docRef = doc(db, 'campaigns', id);
       const snap = await getDoc(docRef);
       if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as Campaign;
+        const remote = { id: snap.id, ...snap.data() } as Campaign;
+        saveLocalCampaigns([remote, ...localList.filter((c) => c.id !== remote.id)]);
+        return remote;
       }
     } catch (err) {
       console.warn('Firebase error getting campaign by ID', err);
     }
   }
 
-  const campaigns = getLocalCampaigns();
-  return campaigns.find((c) => c.id === id) || null;
+  return null;
 }
 
 export async function createCampaign(data: {
@@ -594,21 +644,29 @@ export async function updateCampaignStatus(
 
 // SUBJECT METHODS
 export async function getSubjects(campaignId: string): Promise<EvaluatedSubject[]> {
+  const localSubjects = getLocalSubjects().filter((s) => s.campaignId === campaignId);
+
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
       const q = query(collection(db, 'evaluated_subjects'), where('campaignId', '==', campaignId));
       const snap = await getDocs(q);
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as EvaluatedSubject));
+        const remote = snap.docs.map((d) => ({ id: d.id, ...d.data() } as EvaluatedSubject));
+        // Cache to local storage
+        const allSubjects = getLocalSubjects().filter((s) => s.campaignId !== campaignId);
+        saveLocalSubjects([...remote, ...allSubjects]);
+        return remote;
+      } else if (localSubjects.length > 0) {
+        return localSubjects;
       }
     } catch (err) {
       console.warn('Firebase get subjects error', err);
+      if (localSubjects.length > 0) return localSubjects;
     }
   }
 
-  const subjects = getLocalSubjects();
-  return subjects.filter((s) => s.campaignId === campaignId);
+  return localSubjects;
 }
 
 export async function getSubjectById(id: string): Promise<EvaluatedSubject | null> {
@@ -680,6 +738,14 @@ export async function deleteSubject(subjectId: string): Promise<void> {
 
 // RESPONSES METHODS
 export async function getResponses(campaignId?: string, subjectId?: string): Promise<EvaluationResponse[]> {
+  let localList = getLocalResponses();
+  if (campaignId) {
+    localList = localList.filter((r) => r.campaignId === campaignId);
+  }
+  if (subjectId) {
+    localList = localList.filter((r) => r.subjectId === subjectId);
+  }
+
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
@@ -697,21 +763,27 @@ export async function getResponses(campaignId?: string, subjectId?: string): Pro
       }
       const snap = await getDocs(q);
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as EvaluationResponse));
+        const remote = snap.docs.map((d) => ({ id: d.id, ...d.data() } as EvaluationResponse));
+        // Update local storage cache
+        const allResps = getLocalResponses();
+        const otherResps = allResps.filter((r) => {
+          if (campaignId && subjectId) return r.campaignId !== campaignId || r.subjectId !== subjectId;
+          if (campaignId) return r.campaignId !== campaignId;
+          if (subjectId) return r.subjectId !== subjectId;
+          return false;
+        });
+        saveLocalResponses([...remote, ...otherResps]);
+        return remote;
+      } else if (localList.length > 0) {
+        return localList;
       }
     } catch (err) {
       console.warn('Firebase get responses error', err);
+      if (localList.length > 0) return localList;
     }
   }
 
-  let list = getLocalResponses();
-  if (campaignId) {
-    list = list.filter((r) => r.campaignId === campaignId);
-  }
-  if (subjectId) {
-    list = list.filter((r) => r.subjectId === subjectId);
-  }
-  return list;
+  return localList;
 }
 
 export async function submitResponse(data: {

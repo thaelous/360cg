@@ -58,7 +58,12 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   const targetCompanyRef = evaluatorCompanyId || initialCode || urlCompRef;
 
   // Step: 'code_entry' | 'select_subject_role' | 'questionnaire' | 'comments' | 'completed'
-  const [step, setStep] = useState<'code_entry' | 'select_subject_role' | 'questionnaire' | 'comments' | 'completed'>('code_entry');
+  const [step, setStep] = useState<'code_entry' | 'select_subject_role' | 'questionnaire' | 'comments' | 'completed'>(() => {
+    if (evaluatorSubjectId || initialSubjectId || urlSubId || evaluatorCompanyId || initialCode || urlCompRef) {
+      return 'select_subject_role';
+    }
+    return 'code_entry';
+  });
 
   const [clientCode, setClientCode] = useState(initialCode || '');
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -77,7 +82,7 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     recommendations: '',
   });
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(targetSubjectId || targetCompanyRef));
   const [errorMsg, setErrorMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -121,11 +126,13 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
       if (companyRef) {
         await loadCampaignByCode(companyRef, subjectId);
       } else {
-        setErrorMsg('No se encontró el colaborador a evaluar.');
+        setErrorMsg('No se encontró el colaborador a evaluar. Puedes ingresar el código de empresa a continuación.');
+        setStep('code_entry');
       }
     } catch (err) {
       console.error(err);
       setErrorMsg('Error al cargar la evaluación.');
+      setStep('code_entry');
     } finally {
       setLoading(false);
     }
@@ -134,6 +141,7 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   const loadCampaignByCode = async (codeToSearch: string, preselectedSubjectId?: string) => {
     if (!codeToSearch.trim()) {
       setErrorMsg('Por favor ingresa un código de empresa válido.');
+      setStep('code_entry');
       return;
     }
     setLoading(true);
@@ -145,6 +153,7 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
       }
       if (!camp) {
         setErrorMsg(`No se encontró ninguna campaña con el código "${codeToSearch}". Verifica el código con tu coordinador.`);
+        setStep('code_entry');
         setLoading(false);
         return;
       }
@@ -302,6 +311,29 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     setCurrentCompetencyIndex(0);
     setStep('select_subject_role');
   };
+
+  // LOADING STATE (Direct link or campaign loading)
+  if (loading && (targetSubjectId || targetCompanyRef)) {
+    return (
+      <div className="w-full max-w-lg mx-auto px-4 py-16 sm:py-24 text-center space-y-5">
+        <div className="flex flex-col items-center">
+          <img
+            src="/comgico.png"
+            alt="Comunicación Global"
+            className="h-16 w-16 sm:h-20 sm:w-20 object-contain rounded-full shadow-lg ring-4 ring-lime-400/40 mb-3 animate-pulse"
+          />
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-lime-50 border border-lime-300 text-slate-900 text-xs font-bold shadow-xs">
+            <Loader2 className="w-4 h-4 animate-spin text-lime-600" />
+            <span>Cargando evaluación 360°...</span>
+          </div>
+        </div>
+        <div>
+          <h3 className="text-lg sm:text-xl font-extrabold text-slate-900">Preparando Cuestionario</h3>
+          <p className="text-xs sm:text-sm text-slate-500 mt-1">Conectando con la base de datos y validando información...</p>
+        </div>
+      </div>
+    );
+  }
 
   // 1. STEP: ENTER CLIENT CODE
   if (step === 'code_entry') {

@@ -9,17 +9,35 @@ import { FirebaseModal } from './components/FirebaseModal';
 import { Campaign } from './types';
 import { getAdminSession, logoutSuperAdmin, AdminUser } from './services/authService';
 import { getCampaignByCode, getCampaignById, getSubjectById } from './services/dataService';
-import { Lock, Shield, Building2, UserCheck, Flame } from 'lucide-react';
+import { getFirebaseDb } from './firebase/config';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { Lock, Shield, Loader2 } from 'lucide-react';
 
 export type AppView = 'client_welcome' | 'coordinator' | 'evaluator' | 'admin';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<AppView>('client_welcome');
+  // Inspección síncrona de URL para evitar cualquier parpadeo de pantalla de bienvenida
+  const initialParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const initCampana = initialParams ? initialParams.get('campana') || initialParams.get('empresa') || initialParams.get('code') : null;
+  const initEvaluar = initialParams ? initialParams.get('evaluar') || initialParams.get('id') || initialParams.get('subject') : null;
+  const initRole = initialParams ? initialParams.get('role') : null;
+  const initPortal = initialParams ? initialParams.get('portal') : null;
+
+  const hasDirectRoute = Boolean(initCampana || initEvaluar || initRole || initPortal);
+
+  const [isLoadingRoute, setIsLoadingRoute] = useState<boolean>(() => Boolean(initCampana || initEvaluar));
+  const [currentView, setCurrentView] = useState<AppView>(() => {
+    if (initCampana || initEvaluar) return 'evaluator';
+    if (initRole === 'admin') return 'admin';
+    if (initRole === 'coordinator' || initPortal === 'empresa' || initPortal === 'coordinator') return 'coordinator';
+    return 'client_welcome';
+  });
+
   const [activeCompany, setActiveCompany] = useState<Campaign | null>(null);
 
   // Evaluator params
-  const [evaluatorSubjectId, setEvaluatorSubjectId] = useState<string>('');
-  const [evaluatorCompanyId, setEvaluatorCompanyId] = useState<string>('');
+  const [evaluatorSubjectId, setEvaluatorSubjectId] = useState<string>(() => initEvaluar || '');
+  const [evaluatorCompanyId, setEvaluatorCompanyId] = useState<string>(() => initCampana || '');
 
   // Admin state
   const [adminUser, setAdminUser] = useState<AdminUser | null>(getAdminSession());
@@ -27,88 +45,131 @@ export default function App() {
   const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Función para cargar datos y cambiar la vista a la encuesta/cuestionario
-  const cargarDatosParaEvaluacion = async (campanaCode?: string | null, evaluadoId?: string | null) => {
-    const cleanCamp = campanaCode?.trim() || '';
-    const cleanEval = evaluadoId?.trim() || '';
+  // Efecto robusto de arranque para enrutamiento directo (QR, enlaces de empresa o admin)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const campanaParam = params.get('campana') || params.get('empresa') || params.get('code');
+    const evaluarParam = params.get('evaluar') || params.get('id') || params.get('subject');
+    const roleParam = params.get('role');
+    const portalParam = params.get('portal');
 
-    if (!cleanCamp && !cleanEval) return;
-
-    setEvaluatorSubjectId(cleanEval);
-    setEvaluatorCompanyId(cleanCamp);
-
-    try {
-      let resolvedCampaign: Campaign | null = null;
-
-      // 1. Si hay evaluadoId, buscar el sujeto y su campaña
-      if (cleanEval) {
-        const subject = await getSubjectById(cleanEval);
-        if (subject && subject.campaignId) {
-          resolvedCampaign = await getCampaignById(subject.campaignId);
-        }
+    // 1. Acceso directo a Super Admin
+    if (roleParam === 'admin' && !campanaParam && !evaluarParam) {
+      if (getAdminSession()) {
+        setCurrentView('admin');
+      } else {
+        setIsAdminLoginModalOpen(true);
       }
-
-      // 2. Si no se resolvió la campaña aún y tenemos campanaCode
-      if (!resolvedCampaign && cleanCamp) {
-        resolvedCampaign = (await getCampaignByCode(cleanCamp)) || (await getCampaignById(cleanCamp));
-      }
-
-      if (resolvedCampaign) {
-        setActiveCompany(resolvedCampaign);
-        if (!cleanCamp) {
-          setEvaluatorCompanyId(resolvedCampaign.clientCode || resolvedCampaign.id);
-        }
-      }
-    } catch (e) {
-      console.warn('Error resolviendo datos para evaluación directa:', e);
+      setIsLoadingRoute(false);
+      return;
     }
 
-    // Cambiar inmediatamente la vista al cuestionario de evaluador
-    setCurrentView('evaluator');
-  };
-
-  // Parse URL on initial load for direct evaluator or company links
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const campanaCode = params.get('campana') || params.get('empresa') || params.get('code');
-      const evaluadoId = params.get('evaluar') || params.get('id') || params.get('subject');
-      const roleParam = params.get('role');
-      const portalParam = params.get('portal');
-
-      // Si viene con rol de admin explícito y sin parámetros de evaluación
-      if (roleParam === 'admin' && !campanaCode && !evaluadoId) {
-        if (getAdminSession()) {
-          setCurrentView('admin');
-        } else {
-          setIsAdminLoginModalOpen(true);
-        }
-        return;
-      }
-
-      // Si viene con rol explícito de coordinador / portal empresa (no evaluador)
-      if (
-        (roleParam === 'coordinator' || portalParam === 'empresa' || portalParam === 'coordinator') &&
-        campanaCode &&
-        !evaluadoId
-      ) {
-        (async () => {
-          const camp = (await getCampaignByCode(campanaCode)) || (await getCampaignById(campanaCode));
+    // 2. Acceso directo a Portal Coordinador de Empresa
+    if (
+      (roleParam === 'coordinator' || portalParam === 'empresa' || portalParam === 'coordinator') &&
+      campanaParam &&
+      !evaluarParam
+    ) {
+      (async () => {
+        try {
+          const cleanCode = campanaParam.trim();
+          let camp = await getCampaignByCode(cleanCode);
+          if (!camp) camp = await getCampaignById(cleanCode);
           if (camp) {
             setActiveCompany(camp);
             setCurrentView('coordinator');
           }
-        })();
-        return;
-      }
-
-      // Cargar la campaña / evaluado correspondiente y cambiar la vista a la encuesta
-      if (campanaCode || evaluadoId) {
-        cargarDatosParaEvaluacion(campanaCode, evaluadoId);
-      }
-    } catch (e) {
-      console.error('Error parsing URL parameters:', e);
+        } catch (err) {
+          console.error('Error cargando coordinador:', err);
+        } finally {
+          setIsLoadingRoute(false);
+        }
+      })();
+      return;
     }
+
+    // 3. Acceso directo a Evaluación (QR o Enlace de Evaluador)
+    if (campanaParam || evaluarParam) {
+      setIsLoadingRoute(true);
+
+      const fetchCampaignAndRedirect = async () => {
+        try {
+          let matchedCampana: Campaign | null = null;
+          let matchedSubjectId = evaluarParam ? evaluarParam.trim() : '';
+
+          // A. Si se proporcionó ID de evaluado, buscar el colaborador primero
+          if (evaluarParam) {
+            try {
+              const sub = await getSubjectById(evaluarParam.trim());
+              if (sub) {
+                matchedSubjectId = sub.id;
+                if (sub.campaignId) {
+                  matchedCampana = await getCampaignById(sub.campaignId);
+                }
+              }
+            } catch (errSub) {
+              console.warn('Error buscando evaluado por ID:', errSub);
+            }
+          }
+
+          // B. Si aún no tenemos la campaña y viene campanaParam
+          if (!matchedCampana && campanaParam) {
+            const cleanCode = campanaParam.trim();
+
+            // 1. Intentar Firestore directamente por clientCode
+            const db = getFirebaseDb();
+            if (db) {
+              try {
+                const q = query(collection(db, 'campaigns'), where('clientCode', '==', cleanCode.toUpperCase()));
+                const snap = await getDocs(q);
+                if (!snap.empty) {
+                  const d = snap.docs[0];
+                  matchedCampana = { id: d.id, ...d.data() } as Campaign;
+                } else {
+                  // 2. Intentar por document ID directo en Firestore
+                  const docRef = doc(db, 'campaigns', cleanCode);
+                  const docSnap = await getDoc(docRef);
+                  if (docSnap.exists()) {
+                    matchedCampana = { id: docSnap.id, ...docSnap.data() } as Campaign;
+                  }
+                }
+              } catch (fsErr) {
+                console.warn('Error consultando Firestore directamente:', fsErr);
+              }
+            }
+
+            // 3. Fallback con servicio unificado (incluye localStorage y mocks)
+            if (!matchedCampana) {
+              matchedCampana = (await getCampaignByCode(cleanCode)) || (await getCampaignById(cleanCode));
+            }
+          }
+
+          if (matchedCampana) {
+            setActiveCompany(matchedCampana);
+            setEvaluatorCompanyId(matchedCampana.clientCode || matchedCampana.id);
+          } else if (campanaParam) {
+            setEvaluatorCompanyId(campanaParam);
+          }
+
+          if (matchedSubjectId) {
+            setEvaluatorSubjectId(matchedSubjectId);
+          }
+
+          // Pasar directamente a la pantalla de responder la encuesta
+          setCurrentView('evaluator');
+        } catch (err) {
+          console.error('Error resolviendo campaña para evaluación:', err);
+          setCurrentView('evaluator');
+        } finally {
+          setIsLoadingRoute(false);
+        }
+      };
+
+      fetchCampaignAndRedirect();
+      return;
+    }
+
+    setIsLoadingRoute(false);
   }, []);
 
   const handleCompanyAuthenticated = (campaign: Campaign) => {
@@ -172,38 +233,57 @@ export default function App() {
       />
 
       {/* Main View Container */}
-      <main className="flex-1">
-        {/* NIVEL 1: Portal de Bienvenida y Acceso para Clientes */}
-        {currentView === 'client_welcome' && (
-          <ClientWelcome onCompanyAuthenticated={handleCompanyAuthenticated} />
-        )}
+      <main className="flex-1 flex flex-col">
+        {isLoadingRoute ? (
+          <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] px-4 py-12">
+            <div className="bg-white rounded-3xl p-8 border border-slate-200/90 shadow-xl max-w-sm w-full text-center space-y-4">
+              <img
+                src="/comgico.png"
+                alt="Comunicación Global"
+                className="h-16 w-16 object-contain rounded-full shadow-lg ring-4 ring-lime-400/40 mx-auto animate-pulse"
+              />
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-lime-50 border border-lime-300 text-slate-900 text-xs font-bold shadow-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-lime-600" />
+                <span>Accediendo a la evaluación 360°...</span>
+              </div>
+              <p className="text-xs text-slate-500">Conectando directamente con la evaluación solicitada</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* NIVEL 1: Portal de Bienvenida y Acceso para Clientes */}
+            {currentView === 'client_welcome' && (
+              <ClientWelcome onCompanyAuthenticated={handleCompanyAuthenticated} />
+            )}
 
-        {/* NIVEL 1: Panel del Cliente / Coordinador de Empresa */}
-        {currentView === 'coordinator' && activeCompany && (
-          <CoordinatorPortal
-            initialCampaign={activeCompany}
-            onLogout={handleLogoutCompany}
-            onLaunchEvaluation={handleLaunchEvaluationFromCoordinator}
-          />
-        )}
+            {/* NIVEL 1: Panel del Cliente / Coordinador de Empresa */}
+            {currentView === 'coordinator' && activeCompany && (
+              <CoordinatorPortal
+                initialCampaign={activeCompany}
+                onLogout={handleLogoutCompany}
+                onLaunchEvaluation={handleLaunchEvaluationFromCoordinator}
+              />
+            )}
 
-        {/* NIVEL 2: Acceso Directo de Evaluadores (Vía QR o Enlace) */}
-        {currentView === 'evaluator' && (
-          <EvaluatorPortal
-            evaluatorSubjectId={evaluatorSubjectId}
-            evaluatorCompanyId={evaluatorCompanyId}
-            onNavigateHome={() => setCurrentView('client_welcome')}
-          />
-        )}
+            {/* NIVEL 2: Acceso Directo de Evaluadores (Vía QR o Enlace) */}
+            {currentView === 'evaluator' && (
+              <EvaluatorPortal
+                evaluatorSubjectId={evaluatorSubjectId}
+                evaluatorCompanyId={evaluatorCompanyId}
+                onNavigateHome={() => setCurrentView('client_welcome')}
+              />
+            )}
 
-        {/* NIVEL 3: Acceso Exclusivo de Super Administrador */}
-        {currentView === 'admin' && (
-          <AdminDashboard
-            onSwitchToCoordinator={handleSwitchToCoordinatorFromAdmin}
-            onLaunchEvaluation={handleLaunchEvaluationFromCoordinator}
-            onLogoutAdmin={handleLogoutAdmin}
-            onOpenFirebaseModal={() => setIsFirebaseModalOpen(true)}
-          />
+            {/* NIVEL 3: Acceso Exclusivo de Super Administrador */}
+            {currentView === 'admin' && (
+              <AdminDashboard
+                onSwitchToCoordinator={handleSwitchToCoordinatorFromAdmin}
+                onLaunchEvaluation={handleLaunchEvaluationFromCoordinator}
+                onLogoutAdmin={handleLogoutAdmin}
+                onOpenFirebaseModal={() => setIsFirebaseModalOpen(true)}
+              />
+            )}
+          </>
         )}
       </main>
 

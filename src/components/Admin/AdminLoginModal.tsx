@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Lock, ShieldCheck, Mail, Key, Sparkles, AlertCircle, ArrowRight } from 'lucide-react';
-import { loginSuperAdmin, quickDemoAdminLogin } from '../../services/authService';
+import { X, Lock, ShieldCheck, Mail, Key, AlertCircle, ArrowRight } from 'lucide-react';
+import { loginSuperAdmin } from '../../services/authService';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -13,8 +13,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   onClose,
   onLoginSuccess,
 }) => {
-  const [email, setEmail] = useState('admin@talent360.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -22,6 +22,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email.trim() || !password.trim()) {
+      setErrorMsg('Por favor completa todos los campos.');
+      return;
+    }
     setLoading(true);
     setErrorMsg('');
     try {
@@ -38,29 +42,23 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     }
   };
 
-  const handleQuickDemo = () => {
-    quickDemoAdminLogin();
-    onLoginSuccess();
-    onClose();
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
       <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
         {/* Header */}
         <div className="bg-slate-900 px-6 py-5 flex items-center justify-between text-white border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-400/30 flex items-center justify-center">
-              <Lock className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-lime-500/20 text-lime-400 border border-lime-400/30 flex items-center justify-center">
+              <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
               <h3 className="font-extrabold text-base">Acceso Super Administrador</h3>
-              <p className="text-xs text-slate-400">Nivel 3 • Área protegida y restringida</p>
+              <p className="text-xs text-slate-400">Comunicación Global • Acceso Seguro y Restringido</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition"
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -87,8 +85,9 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@talent360.com"
-                  className="w-full text-xs pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                  placeholder="admin@empresa.com"
+                  autoComplete="email"
+                  className="w-full text-xs pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition"
                 />
               </div>
             </div>
@@ -105,7 +104,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full text-xs pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                  autoComplete="current-password"
+                  className="w-full text-xs pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition"
                 />
               </div>
             </div>
@@ -113,29 +113,15 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2"
+              className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-lime-400 font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 border border-slate-700 cursor-pointer disabled:cursor-not-allowed"
             >
-              {loading ? 'Verificando credenciales...' : 'Ingresar al Panel de Super Admin'}
+              {loading ? 'Verificando con Firebase Auth...' : 'Iniciar Sesión'}
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-
-          {/* Quick Demo Option for Prototype Mode */}
-          <div className="pt-4 border-t border-slate-100 space-y-2">
-            <span className="block text-center text-[11px] text-slate-400 font-medium">
-              Modo Prototipo / Demostración Rápida:
-            </span>
-            <button
-              type="button"
-              onClick={handleQuickDemo}
-              className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
-            >
-              <Sparkles className="w-4 h-4 text-amber-600" />
-              Ingresar con 1 Clic (Admin Demo)
-            </button>
-          </div>
         </div>
       </div>
     </div>
   );
 };
+

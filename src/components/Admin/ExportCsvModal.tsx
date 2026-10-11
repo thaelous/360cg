@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, FileSpreadsheet, Download, CheckCircle, Table, MessageSquare, Files } from 'lucide-react';
+import { X, FileSpreadsheet, Download, CheckCircle, Table, MessageSquare, Files, Sparkles } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse } from '../../types';
 import { exportCampaignSummaryCsv, exportCampaignDetailedResponsesCsv } from '../../utils/exportCsv';
+import { exportMasterExcelReport } from '../../utils/exportMasterExcel';
 
 interface ExportCsvModalProps {
   isOpen: boolean;
@@ -21,6 +22,16 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleExportMasterExcel = () => {
+    try {
+      const filename = exportMasterExcelReport(campaign, subjects, responses);
+      setDownloadSuccess(`¡Archivo Súper Maestro "${filename}" descargado con éxito!`);
+      setTimeout(() => setDownloadSuccess(null), 4000);
+    } catch (err: any) {
+      alert('Error generando Excel maestro: ' + (err?.message || err));
+    }
+  };
 
   const handleExportSummary = () => {
     exportCampaignSummaryCsv(campaign, subjects, responses);
@@ -81,6 +92,33 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
           </div>
 
           <div className="space-y-3">
+            {/* Option 0: Súper Maestro Excel (.xlsx) */}
+            <div className="p-4 bg-lime-50/70 hover:bg-lime-50 border-2 border-lime-400 rounded-2xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-lime-700" />
+                  <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                    Archivo Súper Maestro de Resultados en Excel
+                    <span className="text-[10px] bg-slate-900 text-lime-400 font-bold px-1.5 py-0.5 rounded">.XLSX</span>
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-600">
+                  Libro multi-hojas: <strong>Hoja 1 (Resumen Ejecutivo)</strong> con promedios por rol y comentarios + <strong>Hoja 2 (Detalle Fila por Fila)</strong>.
+                </p>
+                <span className="inline-block text-[10px] font-semibold text-lime-800">
+                  {subjects.length} colaboradores • {responses.length} evaluaciones
+                </span>
+              </div>
+              <button
+                onClick={handleExportMasterExcel}
+                disabled={responses.length === 0}
+                className="px-4 py-2.5 bg-lime-500 hover:bg-lime-600 disabled:opacity-50 text-slate-900 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition shadow-xs self-start sm:self-center border border-lime-400 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                Descargar Excel (.xlsx)
+              </button>
+            </div>
+
             {/* Option 1: Consolidated Summary */}
             <div className="p-4 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-2xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-0.5">

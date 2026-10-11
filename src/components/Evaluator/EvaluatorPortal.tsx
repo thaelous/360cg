@@ -50,8 +50,12 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   evaluatorCompanyId = '',
   onNavigateHome,
 }) => {
-  const targetSubjectId = evaluatorSubjectId || initialSubjectId;
-  const targetCompanyRef = evaluatorCompanyId || initialCode;
+  const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const urlSubId = urlParams ? urlParams.get('evaluar') || urlParams.get('id') || urlParams.get('subject') || '' : '';
+  const urlCompRef = urlParams ? urlParams.get('campana') || urlParams.get('empresa') || urlParams.get('code') || '' : '';
+
+  const targetSubjectId = evaluatorSubjectId || initialSubjectId || urlSubId;
+  const targetCompanyRef = evaluatorCompanyId || initialCode || urlCompRef;
 
   // Step: 'code_entry' | 'select_subject_role' | 'questionnaire' | 'comments' | 'completed'
   const [step, setStep] = useState<'code_entry' | 'select_subject_role' | 'questionnaire' | 'comments' | 'completed'>('code_entry');
@@ -95,7 +99,10 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
         setSelectedSubjectId(subject.id);
         setSubjects([subject]);
 
-        const camp = await getCampaignById(subject.campaignId);
+        let camp = await getCampaignById(subject.campaignId);
+        if (!camp && companyRef) {
+          camp = (await getCampaignByCode(companyRef)) || (await getCampaignById(companyRef));
+        }
         if (camp) {
           if (camp.status === 'closed') {
             setErrorMsg('Esta campaña de evaluación ha sido cerrada.');
@@ -132,7 +139,10 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     setLoading(true);
     setErrorMsg('');
     try {
-      const camp = await getCampaignByCode(codeToSearch.trim());
+      let camp = await getCampaignByCode(codeToSearch.trim());
+      if (!camp) {
+        camp = await getCampaignById(codeToSearch.trim());
+      }
       if (!camp) {
         setErrorMsg(`No se encontró ninguna campaña con el código "${codeToSearch}". Verifica el código con tu coordinador.`);
         setLoading(false);

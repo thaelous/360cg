@@ -212,8 +212,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div>
             <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
               Sesión Super Administrador
-              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.2 rounded font-mono">
-                {adminUser?.email || 'admin@talent360.com'}
+              <span className="text-[10px] bg-slate-100 text-slate-700 border border-slate-300 px-1.5 py-0.2 rounded font-mono">
+                {adminUser?.email || 'admin@comunicacionglobal.com'}
               </span>
             </span>
             <span className="text-[11px] text-slate-400 block">

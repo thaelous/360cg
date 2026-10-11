@@ -17,6 +17,7 @@ import {
   HelpCircle,
   FileSpreadsheet,
   Download,
+  RefreshCw,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats } from '../../types';
 import {
@@ -30,6 +31,7 @@ import {
 import { ShareQrModal } from '../ShareQrModal';
 import { SubjectReportModal } from '../Reports/SubjectReportModal';
 import { ExportCsvModal } from '../Admin/ExportCsvModal';
+import { exportMasterExcelReport } from '../../utils/exportMasterExcel';
 
 interface CoordinatorPortalProps {
   initialCode?: string;
@@ -59,6 +61,8 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const [reportSubjectResponses, setReportSubjectResponses] = useState<EvaluationResponse[]>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [excelSuccessMsg, setExcelSuccessMsg] = useState('');
 
   // New subject form
   const [newSubject, setNewSubject] = useState({
@@ -190,6 +194,42 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
     setTimeout(() => {
       window.print();
     }, 300);
+  };
+
+  const handleDownloadMasterExcel = async () => {
+    if (!campaign) return;
+    if (subjects.length === 0) {
+      alert('No hay colaboradores registrados en esta campaña para generar el reporte maestro.');
+      return;
+    }
+    if (responses.length === 0) {
+      alert('Aún no se han recibido evaluaciones para esta campaña. Las evaluaciones registradas se consolidarán aquí automáticamente.');
+      return;
+    }
+
+    setIsExportingExcel(true);
+    try {
+      let currentResponses = responses;
+      try {
+        currentResponses = await getResponses(campaign.id);
+        setResponses(currentResponses);
+      } catch (err) {
+        console.warn('Usando respuestas en memoria:', err);
+      }
+
+      const generatedFileName = exportMasterExcelReport(campaign, subjects, currentResponses);
+      setExcelSuccessMsg(
+        `¡Reporte "${generatedFileName}" descargado con éxito! Se consolidaron ${subjects.length} colaboradores y ${currentResponses.length} evaluaciones.`
+      );
+      setTimeout(() => {
+        setExcelSuccessMsg('');
+      }, 7000);
+    } catch (err: any) {
+      console.error('Error al generar Excel maestro:', err);
+      alert('Ocurrió un error al generar el archivo Excel consolidado: ' + (err?.message || err));
+    } finally {
+      setIsExportingExcel(false);
+    }
   };
 
   const handleOpenShare = (sub?: EvaluatedSubject) => {
@@ -335,9 +375,38 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
         {/* Global Action buttons */}
         <div className="flex flex-wrap items-center gap-3 shrink-0">
+          {/* BOTÓN DESTACADO: REPORTE MAESTRO EN EXCEL */}
+          <button
+            onClick={handleDownloadMasterExcel}
+            disabled={isExportingExcel || responses.length === 0}
+            className="bg-lime-500 hover:bg-lime-600 disabled:opacity-50 disabled:hover:bg-lime-500 text-slate-900 font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition border border-lime-400 cursor-pointer disabled:cursor-not-allowed"
+            title={
+              responses.length > 0
+                ? `Descargar Reporte Maestro en Excel (${responses.length} evaluaciones consolidadas)`
+                : 'Esperando evaluaciones para generar el reporte maestro en Excel'
+            }
+          >
+            {isExportingExcel ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin text-slate-900 shrink-0" />
+                <span>Generando Excel...</span>
+              </>
+            ) : (
+              <>
+                <FileSpreadsheet className="w-4 h-4 text-slate-950 shrink-0" />
+                <span>Descargar Reporte Maestro en Excel</span>
+                {responses.length > 0 && (
+                  <span className="ml-1 text-[11px] bg-slate-900 text-lime-400 px-1.5 py-0.5 rounded-md font-mono font-bold">
+                    {responses.length}
+                  </span>
+                )}
+              </>
+            )}
+          </button>
+
           <button
             onClick={() => setIsExportModalOpen(true)}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-lime-400 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition border border-slate-700"
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-lime-400 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition border border-slate-700 cursor-pointer"
             title="Exportar métricas y respuestas a Excel o CSV"
           >
             <FileSpreadsheet className="w-4 h-4 text-lime-400" />
@@ -346,7 +415,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
           <button
             onClick={() => handleOpenShare()}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-lime-50 text-slate-900 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition border border-slate-300 hover:border-lime-400"
+            className="px-4 py-2.5 bg-slate-100 hover:bg-lime-50 text-slate-900 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition border border-slate-300 hover:border-lime-400 cursor-pointer"
           >
             <QrCode className="w-4 h-4 text-lime-700" />
             Código QR de Campaña
@@ -354,7 +423,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
           <button
             onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2.5 bg-lime-500 hover:bg-lime-400 text-slate-900 rounded-xl text-xs font-black flex items-center gap-2 shadow-md shadow-lime-500/20 transition border border-lime-400"
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition border border-slate-300 cursor-pointer"
           >
             <UserPlus className="w-4 h-4 stroke-[2.5]" />
             Registrar Evaluado
@@ -366,13 +435,33 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               setClientCode('');
               if (onLogout) onLogout();
             }}
-            className="px-3 py-2.5 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition font-medium"
+            className="px-3 py-2.5 text-xs text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition font-medium cursor-pointer"
             title="Cerrar sesión de empresa"
           >
             Cerrar sesión
           </button>
         </div>
       </div>
+
+      {excelSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between gap-3 text-emerald-900 text-xs shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-700">
+              <CheckCircle className="w-4 h-4" />
+            </div>
+            <div>
+              <strong className="block font-bold">Archivo Súper Maestro de Resultados Descargado</strong>
+              <span className="text-slate-600">{excelSuccessMsg}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setExcelSuccessMsg('')}
+            className="px-2.5 py-1 text-emerald-700 hover:bg-emerald-100 rounded-lg font-bold cursor-pointer"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
 
       {/* Progress & Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -763,6 +852,29 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           subjects={subjects}
           responses={responses}
         />
+      )}
+
+      {/* FLOATING SUCCESS TOAST */}
+      {excelSuccessMsg && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md bg-slate-900 text-white border-2 border-lime-400 p-4 rounded-2xl shadow-2xl flex items-start gap-3 transition-all">
+          <div className="w-9 h-9 rounded-xl bg-lime-400/20 text-lime-400 flex items-center justify-center shrink-0 mt-0.5">
+            <CheckCircle className="w-5 h-5 text-lime-400" />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-xs font-black text-lime-400 uppercase tracking-wider flex items-center gap-1.5">
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Reporte Maestro Generado
+            </h4>
+            <p className="text-xs text-slate-200 mt-1 leading-relaxed">{excelSuccessMsg}</p>
+          </div>
+          <button
+            onClick={() => setExcelSuccessMsg('')}
+            className="p-1 text-slate-400 hover:text-white rounded-lg transition cursor-pointer"
+            title="Cerrar notificación"
+          >
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );

@@ -27,42 +27,84 @@ export default function App() {
   const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Función para cargar datos y cambiar la vista a la encuesta/cuestionario
+  const cargarDatosParaEvaluacion = async (campanaCode?: string | null, evaluadoId?: string | null) => {
+    const cleanCamp = campanaCode?.trim() || '';
+    const cleanEval = evaluadoId?.trim() || '';
+
+    if (!cleanCamp && !cleanEval) return;
+
+    setEvaluatorSubjectId(cleanEval);
+    setEvaluatorCompanyId(cleanCamp);
+
+    try {
+      let resolvedCampaign: Campaign | null = null;
+
+      // 1. Si hay evaluadoId, buscar el sujeto y su campaña
+      if (cleanEval) {
+        const subject = await getSubjectById(cleanEval);
+        if (subject && subject.campaignId) {
+          resolvedCampaign = await getCampaignById(subject.campaignId);
+        }
+      }
+
+      // 2. Si no se resolvió la campaña aún y tenemos campanaCode
+      if (!resolvedCampaign && cleanCamp) {
+        resolvedCampaign = (await getCampaignByCode(cleanCamp)) || (await getCampaignById(cleanCamp));
+      }
+
+      if (resolvedCampaign) {
+        setActiveCompany(resolvedCampaign);
+        if (!cleanCamp) {
+          setEvaluatorCompanyId(resolvedCampaign.clientCode || resolvedCampaign.id);
+        }
+      }
+    } catch (e) {
+      console.warn('Error resolviendo datos para evaluación directa:', e);
+    }
+
+    // Cambiar inmediatamente la vista al cuestionario de evaluador
+    setCurrentView('evaluator');
+  };
+
   // Parse URL on initial load for direct evaluator or company links
   useEffect(() => {
     try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const evalParam = urlParams.get('evaluar') || urlParams.get('subject');
-      const compParam = urlParams.get('empresa') || urlParams.get('code');
-      const roleParam = urlParams.get('role');
+      const params = new URLSearchParams(window.location.search);
+      const campanaCode = params.get('campana') || params.get('empresa') || params.get('code');
+      const evaluadoId = params.get('evaluar') || params.get('id') || params.get('subject');
+      const roleParam = params.get('role');
+      const portalParam = params.get('portal');
 
-      // LEVEL 2: Direct Evaluator URL (e.g. ?evaluar=ID_EVALUADO&empresa=ID_EMPRESA)
-      if (evalParam) {
-        setEvaluatorSubjectId(evalParam);
-        if (compParam) {
-          setEvaluatorCompanyId(compParam);
-        }
-        setCurrentView('evaluator');
-        return;
-      }
-
-      // Direct Company access via URL (?code=CORP-2026-X or ?empresa=ID)
-      if (compParam && !roleParam) {
-        getCampaignByCode(compParam).then((camp) => {
-          if (camp) {
-            setActiveCompany(camp);
-            setCurrentView('coordinator');
-          }
-        });
-        return;
-      }
-
-      // Direct Admin request (?role=admin)
-      if (roleParam === 'admin') {
+      // Si viene con rol de admin explícito y sin parámetros de evaluación
+      if (roleParam === 'admin' && !campanaCode && !evaluadoId) {
         if (getAdminSession()) {
           setCurrentView('admin');
         } else {
           setIsAdminLoginModalOpen(true);
         }
+        return;
+      }
+
+      // Si viene con rol explícito de coordinador / portal empresa (no evaluador)
+      if (
+        (roleParam === 'coordinator' || portalParam === 'empresa' || portalParam === 'coordinator') &&
+        campanaCode &&
+        !evaluadoId
+      ) {
+        (async () => {
+          const camp = (await getCampaignByCode(campanaCode)) || (await getCampaignById(campanaCode));
+          if (camp) {
+            setActiveCompany(camp);
+            setCurrentView('coordinator');
+          }
+        })();
+        return;
+      }
+
+      // Cargar la campaña / evaluado correspondiente y cambiar la vista a la encuesta
+      if (campanaCode || evaluadoId) {
+        cargarDatosParaEvaluacion(campanaCode, evaluadoId);
       }
     } catch (e) {
       console.error('Error parsing URL parameters:', e);

@@ -29,10 +29,13 @@ export const ShareQrModal: React.FC<ShareQrModalProps> = ({
   const params = new URLSearchParams();
   if (subject) {
     params.set('evaluar', subject.id);
-    params.set('empresa', campaign.id);
+    params.set('id', subject.id);
+    params.set('campana', campaign.clientCode);
+    params.set('empresa', campaign.clientCode);
     params.set('code', campaign.clientCode);
   } else {
-    params.set('empresa', campaign.id);
+    params.set('campana', campaign.clientCode);
+    params.set('empresa', campaign.clientCode);
     params.set('code', campaign.clientCode);
   }
   const fullShareUrl = `${origin}${basePath}?${params.toString()}`;

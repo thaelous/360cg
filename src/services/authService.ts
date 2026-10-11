@@ -5,7 +5,7 @@ const ADMIN_SESSION_KEY = 'talent360_super_admin_session';
 
 export interface AdminUser {
   email: string;
-  isMock: boolean;
+  isMock?: boolean;
   loggedInAt: string;
 }
 
@@ -24,61 +24,52 @@ export function isSuperAdminLoggedIn(): boolean {
 }
 
 export async function loginSuperAdmin(email: string, password: string): Promise<AdminUser> {
+  const cleanEmail = email.trim();
+  const cleanPassword = password.trim();
+
+  if (!cleanEmail || !cleanPassword) {
+    throw new Error('Por favor ingresa tu correo electrónico y contraseña.');
+  }
+
   const auth = getFirebaseAuth();
-  const usingFirebase = isFirebaseConfigured() && !!auth;
+  if (!auth || !isFirebaseConfigured()) {
+    throw new Error(
+      'El servicio de Firebase Auth no está configurado. Por favor verifica las variables de entorno de Firebase en el archivo .env.'
+    );
+  }
 
-  if (usingFirebase && auth) {
-    try {
-      const userCred = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const sessionUser: AdminUser = {
-        email: userCred.user.email || email.trim(),
-        isMock: false,
-        loggedInAt: new Date().toISOString(),
-      };
-      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sessionUser));
-      return sessionUser;
-    } catch (firebaseErr: any) {
-      console.warn('Firebase auth failed, checking fallback:', firebaseErr);
-      // If the error is user not found or auth failed in live Firebase, but user specifically wants to test prototype:
-      if (
-        (email.trim().toLowerCase() === 'admin@talent360.com' || email.trim().toLowerCase() === 'admin@empresa.com') &&
-        (password === 'admin123' || password === 'admin')
-      ) {
-        const sessionUser: AdminUser = {
-          email: email.trim(),
-          isMock: true,
-          loggedInAt: new Date().toISOString(),
-        };
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sessionUser));
-        return sessionUser;
-      }
-      throw firebaseErr;
+  try {
+    const userCred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+    const sessionUser: AdminUser = {
+      email: userCred.user.email || cleanEmail,
+      isMock: false,
+      loggedInAt: new Date().toISOString(),
+    };
+    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sessionUser));
+    return sessionUser;
+  } catch (firebaseErr: any) {
+    const code = firebaseErr?.code || '';
+    if (
+      code === 'auth/invalid-credential' ||
+      code === 'auth/wrong-password' ||
+      code === 'auth/user-not-found'
+    ) {
+      throw new Error('Credenciales incorrectas. Verifica tu correo y contraseña.');
     }
+    if (code === 'auth/invalid-email') {
+      throw new Error('El formato del correo electrónico no es válido.');
+    }
+    if (code === 'auth/user-disabled') {
+      throw new Error('Esta cuenta de administrador ha sido deshabilitada.');
+    }
+    if (code === 'auth/too-many-requests') {
+      throw new Error('Demasiados intentos fallidos. Por favor espera unos minutos antes de intentar de nuevo.');
+    }
+    if (code === 'auth/network-request-failed') {
+      throw new Error('Error de red al conectar con Firebase. Revisa tu conexión a internet.');
+    }
+    throw new Error(firebaseErr?.message || 'Error de autenticación en Firebase.');
   }
-
-  // Prototype mode authentication
-  if (!email.trim() || !password.trim()) {
-    throw new Error('Por favor ingresa correo y contraseña.');
-  }
-
-  // Allow standard demo credentials or any provided credentials in prototype mode
-  const sessionUser: AdminUser = {
-    email: email.trim(),
-    isMock: true,
-    loggedInAt: new Date().toISOString(),
-  };
-  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sessionUser));
-  return sessionUser;
-}
-
-export function quickDemoAdminLogin(): AdminUser {
-  const sessionUser: AdminUser = {
-    email: 'admin@talent360.com',
-    isMock: true,
-    loggedInAt: new Date().toISOString(),
-  };
-  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(sessionUser));
-  return sessionUser;
 }
 
 export async function logoutSuperAdmin(): Promise<void> {
@@ -92,3 +83,4 @@ export async function logoutSuperAdmin(): Promise<void> {
   }
   localStorage.removeItem(ADMIN_SESSION_KEY);
 }
+

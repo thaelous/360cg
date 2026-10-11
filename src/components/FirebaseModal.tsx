@@ -6,6 +6,7 @@ import {
   clearStoredFirebaseConfig,
   isFirebaseConfigured,
   getEffectiveFirebaseConfig,
+  firebaseConfig,
 } from '../firebase/config';
 import { isMockModeForced, setMockModeForced, resetToMockData, seedMockDataToFirestore } from '../services/dataService';
 import { FirebaseCustomConfig } from '../types';
@@ -103,7 +104,7 @@ export const FirebaseModal: React.FC<FirebaseModalProps> = ({ isOpen, onClose, o
 
   const handleSyncToFirestore = async () => {
     try {
-      setSuccessMsg('Sincronizando campañas, evaluados y respuestas a Cloud Firestore (evaluacion360-9045e)...');
+      setSuccessMsg('Sincronizando campañas, evaluados y respuestas a Cloud Firestore...');
       await seedMockDataToFirestore();
       setSuccessMsg('¡Colecciones (campaigns, evaluated_subjects, responses) sincronizadas exitosamente en Firestore!');
       onConfigUpdated();
@@ -196,7 +197,7 @@ export const FirebaseModal: React.FC<FirebaseModalProps> = ({ isOpen, onClose, o
 
             <div className="pt-2 mt-2 border-t border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <span className="text-[11px] text-slate-500">
-                Proyecto: <strong className="text-slate-800 font-mono">evaluacion360-9045e</strong>
+                Proyecto: <strong className="text-slate-800 font-mono">{formData.projectId || firebaseConfig.projectId || 'No configurado'}</strong>
               </span>
               <button
                 type="button"
@@ -237,7 +238,7 @@ export const FirebaseModal: React.FC<FirebaseModalProps> = ({ isOpen, onClose, o
                 <input
                   type="text"
                   required
-                  placeholder="AIzaSyB..."
+                  placeholder="tu_api_key"
                   value={formData.apiKey}
                   onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
                   className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"

@@ -439,7 +439,7 @@ export async function seedMockDataToFirestore(dbInstance?: Firestore | null) {
     for (const t of DEFAULT_SURVEY_TEMPLATES) {
       await setDoc(doc(targetDb, 'survey_templates', t.id), t);
     }
-    console.log('Initial 360 data & templates seeded to Firestore project evaluacion360-9045e');
+    console.log('Initial 360 data & templates seeded to Firestore');
   } catch (err) {
     console.warn('Auto-seed to Firestore note:', err);
   }

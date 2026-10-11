@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* Professional Print Styles for PDF Generation */
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+
+  html,
+  body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Universal hiding of non-printable components */
+  header,
+  nav,
+  footer,
+  .print\:hidden,
+  [data-no-print="true"] {
+    display: none !important;
+  }
+
+  /* Enable visible printing for elements configured for print */
+  .print\:block {
+    display: block !important;
+  }
+
+  .print\:flex {
+    display: flex !important;
+  }
+
+  /* Force background colors, borders, and gradients to appear crisp in PDFs */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* Prevent awkward page breaks inside cards, tables, sections */
+  .print-avoid-break,
+  .break-inside-avoid,
+  tr,
+  figure,
+  .card {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Clean up modal scrollbars and sizing for print */
+  .print-full-width {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Remix Comunicación Global - Evaluaciones 360°",
+  "description": "Plataforma empresarial de evaluación 360° de Comunicación Global para medir competencias laborales, liderazgo y clima organizacional con códigos de acceso seguro y reportes en tiempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

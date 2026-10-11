@@ -1,5 +1,8 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   getFirestore,
   Firestore,
   collection,
@@ -88,11 +91,29 @@ export const app: FirebaseApp | null = isFirebaseConfigured()
     : initializeApp(firebaseConfig)
   : null;
 
-// Initialize Firestore & Auth
-export const db: Firestore | null = app ? getFirestore(app) : null;
+// Initialize Firestore with Persistent Local Cache (IndexedDB) for instant offline & reload speed
+function initFirestoreInstance(firebaseApp: FirebaseApp | null): Firestore | null {
+  if (!firebaseApp) return null;
+  try {
+    return initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    // Fallback to standard instance if already initialized or browser doesn't support persistent cache
+    try {
+      return getFirestore(firebaseApp);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export const db: Firestore | null = initFirestoreInstance(app);
 export const auth: Auth | null = app ? getAuth(app) : null;
 
-// Attempt anonymous auth for evaluators if configured
+// Attempt non-blocking anonymous auth for evaluators if configured
 if (auth) {
   signInAnonymously(auth).catch((err) => {
     console.info('Firebase auth initialization note:', err?.code || err);

@@ -8,10 +8,16 @@ import { AdminLoginModal } from './components/Admin/AdminLoginModal';
 import { FirebaseModal } from './components/FirebaseModal';
 import { Campaign } from './types';
 import { getAdminSession, logoutSuperAdmin, AdminUser } from './services/authService';
-import { getCampaignByCode, getCampaignById, getSubjectById } from './services/dataService';
-import { getFirebaseDb } from './firebase/config';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { Lock, Shield, Loader2 } from 'lucide-react';
+import {
+  getCampaignByCode,
+  getCampaignById,
+  getSubjectById,
+  getSubjects,
+  getCachedCampaignByCode,
+  getCachedSubjectById,
+  withTimeout,
+} from './services/dataService';
+import { Lock, Shield, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 
 export type AppView = 'client_welcome' | 'coordinator' | 'evaluator' | 'admin';
 
@@ -23,9 +29,16 @@ export default function App() {
   const initRole = initialParams ? initialParams.get('role') : null;
   const initPortal = initialParams ? initialParams.get('portal') : null;
 
-  const hasDirectRoute = Boolean(initCampana || initEvaluar || initRole || initPortal);
+  // Si ya tenemos en caché local la campaña o el evaluado, no mostramos pantalla bloqueante
+  const preloadedCamp = initCampana ? getCachedCampaignByCode(initCampana) : null;
+  const preloadedSub = initEvaluar ? getCachedSubjectById(initEvaluar) : null;
 
-  const [isLoadingRoute, setIsLoadingRoute] = useState<boolean>(() => Boolean(initCampana || initEvaluar));
+  const [isLoadingRoute, setIsLoadingRoute] = useState<boolean>(() => {
+    if (preloadedCamp || preloadedSub) return false;
+    return Boolean(initCampana || initEvaluar);
+  });
+  const [loadTimeoutNotice, setLoadTimeoutNotice] = useState<boolean>(false);
+
   const [currentView, setCurrentView] = useState<AppView>(() => {
     if (initCampana || initEvaluar) return 'evaluator';
     if (initRole === 'admin') return 'admin';
@@ -33,7 +46,7 @@ export default function App() {
     return 'client_welcome';
   });
 
-  const [activeCompany, setActiveCompany] = useState<Campaign | null>(null);
+  const [activeCompany, setActiveCompany] = useState<Campaign | null>(preloadedCamp);
 
   // Evaluator params
   const [evaluatorSubjectId, setEvaluatorSubjectId] = useState<string>(() => initEvaluar || '');
@@ -53,8 +66,14 @@ export default function App() {
     const roleParam = params.get('role');
     const portalParam = params.get('portal');
 
+    // Timer de seguridad: si tarda más de 3 segundos, activar aviso y reintento
+    const timeoutTimer = setTimeout(() => {
+      setLoadTimeoutNotice(true);
+    }, 3000);
+
     // 1. Acceso directo a Super Admin
     if (roleParam === 'admin' && !campanaParam && !evaluarParam) {
+      clearTimeout(timeoutTimer);
       if (getAdminSession()) {
         setCurrentView('admin');
       } else {
@@ -73,8 +92,15 @@ export default function App() {
       (async () => {
         try {
           const cleanCode = campanaParam.trim();
-          let camp = await getCampaignByCode(cleanCode);
-          if (!camp) camp = await getCampaignById(cleanCode);
+          // Traer en ráfaga paralela la campaña y los sujetos
+          const results = await Promise.allSettled([
+            withTimeout((async () => (await getCampaignByCode(cleanCode)) || (await getCampaignById(cleanCode)))(), 3000, null),
+            withTimeout(getSubjects(cleanCode), 3000, []),
+          ]);
+
+          const campResult = results[0];
+          const camp = campResult.status === 'fulfilled' ? campResult.value : null;
+
           if (camp) {
             setActiveCompany(camp);
             setCurrentView('coordinator');
@@ -82,6 +108,7 @@ export default function App() {
         } catch (err) {
           console.error('Error cargando coordinador:', err);
         } finally {
+          clearTimeout(timeoutTimer);
           setIsLoadingRoute(false);
         }
       })();
@@ -90,65 +117,48 @@ export default function App() {
 
     // 3. Acceso directo a Evaluación (QR o Enlace de Evaluador)
     if (campanaParam || evaluarParam) {
-      setIsLoadingRoute(true);
+      if (!preloadedCamp && !preloadedSub) {
+        setIsLoadingRoute(true);
+      }
 
       const fetchCampaignAndRedirect = async () => {
         try {
-          let matchedCampana: Campaign | null = null;
-          let matchedSubjectId = evaluarParam ? evaluarParam.trim() : '';
+          const cleanCampana = campanaParam ? campanaParam.trim() : '';
+          const cleanSubject = evaluarParam ? evaluarParam.trim() : '';
 
-          // A. Si se proporcionó ID de evaluado, buscar el colaborador primero
-          if (evaluarParam) {
+          // Ráfaga paralela con Promise.allSettled: campaña, sujeto específico y sujetos asociados
+          const [campSettled, subjectSettled, subjectsListSettled] = await Promise.allSettled([
+            cleanCampana
+              ? withTimeout((async () => (await getCampaignByCode(cleanCampana)) || (await getCampaignById(cleanCampana)))(), 3000, null)
+              : Promise.resolve(null),
+            cleanSubject
+              ? withTimeout(getSubjectById(cleanSubject), 3000, null)
+              : Promise.resolve(null),
+            cleanCampana
+              ? withTimeout(getSubjects(cleanCampana), 3000, [])
+              : Promise.resolve([]),
+          ]);
+
+          let matchedCampana: Campaign | null =
+            preloadedCamp || (campSettled.status === 'fulfilled' ? campSettled.value : null);
+          let matchedSubject =
+            preloadedSub || (subjectSettled.status === 'fulfilled' ? subjectSettled.value : null);
+          let matchedSubjectId = matchedSubject ? matchedSubject.id : cleanSubject;
+
+          // Si el sujeto tiene campaignId y aún no tenemos la campaña, intentar resolverla rápidamente
+          if (matchedSubject && matchedSubject.campaignId && !matchedCampana) {
             try {
-              const sub = await getSubjectById(evaluarParam.trim());
-              if (sub) {
-                matchedSubjectId = sub.id;
-                if (sub.campaignId) {
-                  matchedCampana = await getCampaignById(sub.campaignId);
-                }
-              }
-            } catch (errSub) {
-              console.warn('Error buscando evaluado por ID:', errSub);
-            }
-          }
-
-          // B. Si aún no tenemos la campaña y viene campanaParam
-          if (!matchedCampana && campanaParam) {
-            const cleanCode = campanaParam.trim();
-
-            // 1. Intentar Firestore directamente por clientCode
-            const db = getFirebaseDb();
-            if (db) {
-              try {
-                const q = query(collection(db, 'campaigns'), where('clientCode', '==', cleanCode.toUpperCase()));
-                const snap = await getDocs(q);
-                if (!snap.empty) {
-                  const d = snap.docs[0];
-                  matchedCampana = { id: d.id, ...d.data() } as Campaign;
-                } else {
-                  // 2. Intentar por document ID directo en Firestore
-                  const docRef = doc(db, 'campaigns', cleanCode);
-                  const docSnap = await getDoc(docRef);
-                  if (docSnap.exists()) {
-                    matchedCampana = { id: docSnap.id, ...docSnap.data() } as Campaign;
-                  }
-                }
-              } catch (fsErr) {
-                console.warn('Error consultando Firestore directamente:', fsErr);
-              }
-            }
-
-            // 3. Fallback con servicio unificado (incluye localStorage y mocks)
-            if (!matchedCampana) {
-              matchedCampana = (await getCampaignByCode(cleanCode)) || (await getCampaignById(cleanCode));
+              matchedCampana = await withTimeout(getCampaignById(matchedSubject.campaignId), 2000, null);
+            } catch (errCamp) {
+              console.warn('Error resolviendo campaña desde sujeto:', errCamp);
             }
           }
 
           if (matchedCampana) {
             setActiveCompany(matchedCampana);
             setEvaluatorCompanyId(matchedCampana.clientCode || matchedCampana.id);
-          } else if (campanaParam) {
-            setEvaluatorCompanyId(campanaParam);
+          } else if (cleanCampana) {
+            setEvaluatorCompanyId(cleanCampana);
           }
 
           if (matchedSubjectId) {
@@ -161,6 +171,7 @@ export default function App() {
           console.error('Error resolviendo campaña para evaluación:', err);
           setCurrentView('evaluator');
         } finally {
+          clearTimeout(timeoutTimer);
           setIsLoadingRoute(false);
         }
       };
@@ -169,6 +180,7 @@ export default function App() {
       return;
     }
 
+    clearTimeout(timeoutTimer);
     setIsLoadingRoute(false);
   }, []);
 
@@ -247,6 +259,32 @@ export default function App() {
                 <span>Accediendo a la evaluación 360°...</span>
               </div>
               <p className="text-xs text-slate-500">Conectando directamente con la evaluación solicitada</p>
+
+              {loadTimeoutNotice && (
+                <div className="pt-3 border-t border-slate-100 space-y-3">
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs p-3 rounded-2xl text-left flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>La conexión remota está tardando más de lo habitual. Puedes continuar directamente.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsLoadingRoute(false)}
+                      className="flex-1 py-2 px-3 bg-lime-500 hover:bg-lime-400 text-slate-900 text-xs font-extrabold rounded-xl transition shadow-xs cursor-pointer"
+                    >
+                      Continuar ahora
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Reintentar</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (

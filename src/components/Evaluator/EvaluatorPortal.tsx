@@ -31,8 +31,13 @@ import {
   getCampaignById,
   getSubjectById,
   getSubjects,
+  getCachedCampaignByCode,
+  getCachedCampaignById,
+  getCachedSubjectById,
+  getCachedSubjects,
   submitResponse,
   getCampaigns,
+  withTimeout,
 } from '../../services/dataService';
 
 interface EvaluatorPortalProps {
@@ -65,10 +70,27 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     return 'code_entry';
   });
 
-  const [clientCode, setClientCode] = useState(initialCode || '');
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [subjects, setSubjects] = useState<EvaluatedSubject[]>([]);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(targetSubjectId || '');
+  // Fast initial priming from cache (< 5ms)
+  const initialCachedSub = targetSubjectId ? getCachedSubjectById(targetSubjectId) : null;
+  const initialCachedCamp = targetCompanyRef
+    ? getCachedCampaignByCode(targetCompanyRef) || getCachedCampaignById(targetCompanyRef)
+    : initialCachedSub
+    ? getCachedCampaignById(initialCachedSub.campaignId)
+    : null;
+  const initialCachedSubjects = initialCachedCamp ? getCachedSubjects(initialCachedCamp.id) : [];
+
+  const [clientCode, setClientCode] = useState(initialCode || initialCachedCamp?.clientCode || '');
+  const [campaign, setCampaign] = useState<Campaign | null>(initialCachedCamp);
+  const [subjects, setSubjects] = useState<EvaluatedSubject[]>(() => {
+    if (initialCachedSubjects.length > 0) return initialCachedSubjects;
+    if (initialCachedSub) return [initialCachedSub];
+    return [];
+  });
+  const [selectedSubjectId, setSelectedSubjectId] = useState(() => {
+    if (targetSubjectId) return targetSubjectId;
+    if (initialCachedSubjects.length === 1) return initialCachedSubjects[0].id;
+    return '';
+  });
   const [evaluatorRole, setEvaluatorRole] = useState<EvaluatorRole>('peer');
   const [evaluatorName, setEvaluatorName] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(true);
@@ -82,31 +104,77 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     recommendations: '',
   });
 
-  const [loading, setLoading] = useState(() => Boolean(targetSubjectId || targetCompanyRef));
+  const [loading, setLoading] = useState(() => {
+    // Si ya tenemos en caché tanto la campaña como el sujeto o lista, no mostramos spinner bloqueante
+    if (initialCachedCamp && (targetSubjectId ? initialCachedSub : initialCachedSubjects.length > 0)) {
+      return false;
+    }
+    return Boolean(targetSubjectId || targetCompanyRef);
+  });
+  const [loadingSlowNotice, setLoadingSlowNotice] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Auto-load direct evaluation when subject ID or company ref is present in URL
   useEffect(() => {
+    let slowTimer = setTimeout(() => {
+      setLoadingSlowNotice(true);
+    }, 3000);
+
     if (targetSubjectId) {
-      loadDirectSubjectEvaluation(targetSubjectId, targetCompanyRef);
+      loadDirectSubjectEvaluation(targetSubjectId, targetCompanyRef).finally(() => {
+        clearTimeout(slowTimer);
+      });
     } else if (targetCompanyRef) {
-      loadCampaignByCode(targetCompanyRef);
+      loadCampaignByCode(targetCompanyRef).finally(() => {
+        clearTimeout(slowTimer);
+      });
+    } else {
+      clearTimeout(slowTimer);
     }
+
+    return () => clearTimeout(slowTimer);
   }, [targetSubjectId, targetCompanyRef]);
 
   const loadDirectSubjectEvaluation = async (subjectId: string, companyRef?: string) => {
+    // Si ya tenemos los datos en memoria/local, no bloquear la UI
+    const localSub = getCachedSubjectById(subjectId);
+    if (localSub) {
+      setSelectedSubjectId(localSub.id);
+      setSubjects([localSub]);
+      const localCamp = getCachedCampaignById(localSub.campaignId) || (companyRef ? getCachedCampaignByCode(companyRef) : null);
+      if (localCamp) {
+        setCampaign(localCamp);
+        setClientCode(localCamp.clientCode);
+        setStep('select_subject_role');
+        setLoading(false);
+        // Cargar otros colaboradores de la misma campaña en background
+        getSubjects(localCamp.id).then((list) => {
+          if (list.length > 0) setSubjects(list);
+        }).catch(() => {});
+        return;
+      }
+    }
+
     setLoading(true);
     setErrorMsg('');
     try {
-      const subject = await getSubjectById(subjectId);
+      const subject = await withTimeout(getSubjectById(subjectId), 3000, localSub);
       if (subject) {
         setSelectedSubjectId(subject.id);
         setSubjects([subject]);
 
-        let camp = await getCampaignById(subject.campaignId);
+        let camp = await withTimeout(
+          getCampaignById(subject.campaignId),
+          3000,
+          getCachedCampaignById(subject.campaignId)
+        );
         if (!camp && companyRef) {
-          camp = (await getCampaignByCode(companyRef)) || (await getCampaignById(companyRef));
+          camp = await withTimeout(
+            (async () => (await getCampaignByCode(companyRef)) || (await getCampaignById(companyRef)))(),
+            3000,
+            getCachedCampaignByCode(companyRef)
+          );
         }
         if (camp) {
           if (camp.status === 'closed') {
@@ -118,6 +186,11 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
           setClientCode(camp.clientCode);
           setStep('select_subject_role');
           setLoading(false);
+
+          // Cargar resto de colaboradores en background sin bloquear
+          getSubjects(camp.id).then((list) => {
+            if (list.length > 0) setSubjects(list);
+          }).catch(() => {});
           return;
         }
       }
@@ -139,18 +212,53 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   };
 
   const loadCampaignByCode = async (codeToSearch: string, preselectedSubjectId?: string) => {
-    if (!codeToSearch.trim()) {
+    const cleanCode = codeToSearch.trim();
+    if (!cleanCode) {
       setErrorMsg('Por favor ingresa un código de empresa válido.');
       setStep('code_entry');
       return;
     }
+
+    // 1. FAST PATH (< 5ms): Si ya está en caché local, renderizar de inmediato
+    const cachedCamp = getCachedCampaignByCode(cleanCode) || getCachedCampaignById(cleanCode);
+    if (cachedCamp) {
+      setCampaign(cachedCamp);
+      setClientCode(cachedCamp.clientCode);
+      const cachedList = getCachedSubjects(cachedCamp.id);
+      if (cachedList.length > 0) {
+        setSubjects(cachedList);
+        if (preselectedSubjectId && cachedList.some((s) => s.id === preselectedSubjectId)) {
+          setSelectedSubjectId(preselectedSubjectId);
+        } else if (cachedList.length === 1) {
+          setSelectedSubjectId(cachedList[0].id);
+        }
+      }
+      setStep('select_subject_role');
+      setLoading(false);
+
+      // Sincronización en segundo plano de colaboradores si cambiasen
+      getSubjects(cachedCamp.id).then((freshList) => {
+        if (freshList.length > 0) {
+          setSubjects(freshList);
+          if (preselectedSubjectId && freshList.some((s) => s.id === preselectedSubjectId)) {
+            setSelectedSubjectId(preselectedSubjectId);
+          } else if (freshList.length === 1 && !selectedSubjectId) {
+            setSelectedSubjectId(freshList[0].id);
+          }
+        }
+      }).catch(() => {});
+      return;
+    }
+
     setLoading(true);
     setErrorMsg('');
     try {
-      let camp = await getCampaignByCode(codeToSearch.trim());
-      if (!camp) {
-        camp = await getCampaignById(codeToSearch.trim());
-      }
+      const camp = await withTimeout(
+        (async () => (await getCampaignByCode(cleanCode)) || (await getCampaignById(cleanCode)))(),
+        3000,
+        null
+      );
+
       if (!camp) {
         setErrorMsg(`No se encontró ninguna campaña con el código "${codeToSearch}". Verifica el código con tu coordinador.`);
         setStep('code_entry');
@@ -164,8 +272,19 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
         return;
       }
 
+      // Renderizar campaña de inmediato para no bloquear pantalla
       setCampaign(camp);
-      const subjList = await getSubjects(camp.id);
+      setClientCode(camp.clientCode);
+      setStep('select_subject_role');
+      setLoading(false);
+
+      // Cargar colaboradores en paralelo o background
+      const cachedSubjs = getCachedSubjects(camp.id);
+      if (cachedSubjs.length > 0) {
+        setSubjects(cachedSubjs);
+      }
+
+      const subjList = await withTimeout(getSubjects(camp.id), 3000, cachedSubjs);
       setSubjects(subjList);
 
       if (preselectedSubjectId && subjList.some((s) => s.id === preselectedSubjectId)) {
@@ -173,8 +292,6 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
       } else if (subjList.length === 1) {
         setSelectedSubjectId(subjList[0].id);
       }
-
-      setStep('select_subject_role');
     } catch (err) {
       console.error(err);
       setErrorMsg('Error al conectar con la base de datos. Intenta nuevamente.');
@@ -330,6 +447,35 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
         <div>
           <h3 className="text-lg sm:text-xl font-extrabold text-slate-900">Preparando Cuestionario</h3>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">Conectando con la base de datos y validando información...</p>
+
+          {loadingSlowNotice && (
+            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-left space-y-3">
+              <div className="flex items-start gap-2 text-amber-900 text-xs">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>La sincronización remota está tardando más de 3 segundos. Puedes continuar ahora mismo con la información disponible.</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoading(false);
+                    setStep('select_subject_role');
+                  }}
+                  className="flex-1 py-2 px-3 bg-lime-500 hover:bg-lime-400 text-slate-900 text-xs font-extrabold rounded-xl transition shadow-xs cursor-pointer text-center"
+                >
+                  Continuar sin esperar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="py-2 px-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reintentar</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

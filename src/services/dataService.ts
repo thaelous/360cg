@@ -456,11 +456,55 @@ export async function resetToMockData() {
   }
 }
 
+// PROMISE TIMEOUT HELPER (Evita cuelgues de red o bloqueos de Firestore)
+export function withTimeout<T>(promise: Promise<T>, ms = 3000, fallbackValue: T | null = null): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(fallbackValue as T);
+      }
+    }, ms);
+
+    promise
+      .then((res) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(res);
+        }
+      })
+      .catch((err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          console.warn('Operación asíncrona falló, aplicando fallback:', err);
+          resolve(fallbackValue as T);
+        }
+      });
+  });
+}
+
 // CACHED INSTANT GETTERS FOR ZERO-LATENCY DEMO DATA & VIEWS
 export function getCachedCampaignByCode(clientCode: string): Campaign | null {
   const trimmed = clientCode.trim().toUpperCase();
   const localList = getLocalCampaigns();
-  return localList.find((c) => c.clientCode.toUpperCase() === trimmed) || null;
+  return (
+    localList.find(
+      (c) => c.clientCode.toUpperCase() === trimmed || c.id.toUpperCase() === trimmed
+    ) || null
+  );
+}
+
+export function getCachedCampaignById(id: string): Campaign | null {
+  const localList = getLocalCampaigns();
+  return localList.find((c) => c.id === id) || null;
+}
+
+export function getCachedSubjectById(id: string): EvaluatedSubject | null {
+  const localList = getLocalSubjects();
+  return localList.find((s) => s.id === id) || null;
 }
 
 export function getCachedSubjects(campaignId: string): EvaluatedSubject[] {
@@ -473,34 +517,35 @@ export function getCachedResponses(campaignId: string): EvaluationResponse[] {
 
 // CAMPAIGN METHODS
 export async function getCampaigns(): Promise<Campaign[]> {
+  const localCampaigns = getLocalCampaigns();
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
-      const colRef = collection(db, 'campaigns');
-      const snap = await getDocs(colRef);
-      if (!snap.empty) {
-        const fetched = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign));
-        saveLocalCampaigns(fetched);
-        return fetched;
-      } else {
-        // Auto-seed to Firestore so the user's project is populated
-        await seedMockDataToFirestore(db);
-        return INITIAL_CAMPAIGNS;
-      }
+      const fetchPromise = getDocs(collection(db, 'campaigns')).then((snap) => {
+        if (!snap.empty) {
+          const fetched = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Campaign));
+          saveLocalCampaigns(fetched);
+          return fetched;
+        }
+        return localCampaigns;
+      });
+
+      const result = await withTimeout(fetchPromise, 3000, localCampaigns);
+      return result || localCampaigns;
     } catch (err) {
       console.warn('Firebase error fetching campaigns, falling back to local storage', err);
     }
   }
-  return getLocalCampaigns();
+  return localCampaigns;
 }
 
 export async function getCampaignByCode(clientCode: string): Promise<Campaign | null> {
   const trimmed = clientCode.trim().toUpperCase();
 
-  // 1. FAST-PATH: Retorno instantáneo (< 200ms) para empresas demo y datos locales en memoria
+  // 1. FAST-PATH (< 10ms): Si ya está en la memoria o localStorage, devolverlo INMEDIATAMENTE
   const cached = getCachedCampaignByCode(trimmed);
   if (cached) {
-    // Sincronización en segundo plano sin bloquear la experiencia del usuario
+    // Sincronización en segundo plano sin bloquear la pantalla del usuario
     if (shouldUseFirebase()) {
       const db = getFirebaseDb();
       if (db) {
@@ -513,51 +558,66 @@ export async function getCampaignByCode(clientCode: string): Promise<Campaign | 
               saveLocalCampaigns([remote, ...all]);
             }
           })
-          .catch((e) => console.warn('Background campaign sync note:', e));
+          .catch(() => {});
       }
     }
     return cached;
   }
 
-  // 2. Consulta en Firestore si no está en caché local
+  // 2. Consulta en Firestore con límite estricto de 3.5 segundos
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
-      const q = query(collection(db, 'campaigns'), where('clientCode', '==', trimmed));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        const remote = { id: d.id, ...d.data() } as Campaign;
-        const all = getLocalCampaigns().filter((c) => c.id !== remote.id);
-        saveLocalCampaigns([remote, ...all]);
-        return remote;
-      }
+      const queryPromise = (async () => {
+        const q = query(collection(db, 'campaigns'), where('clientCode', '==', trimmed));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const d = snap.docs[0];
+          const remote = { id: d.id, ...d.data() } as Campaign;
+          const all = getLocalCampaigns().filter((c) => c.id !== remote.id);
+          saveLocalCampaigns([remote, ...all]);
+          return remote;
+        }
+        return null;
+      })();
+
+      const remoteCampaign = await withTimeout(queryPromise, 3500, null);
+      if (remoteCampaign) return remoteCampaign;
     } catch (err) {
       console.warn('Firebase error querying by code, falling back to local storage', err);
     }
   }
 
   const campaigns = getLocalCampaigns();
-  const found = campaigns.find((c) => c.clientCode.toUpperCase() === trimmed);
+  const found = campaigns.find(
+    (c) => c.clientCode.toUpperCase() === trimmed || c.id.toUpperCase() === trimmed
+  );
   return found || null;
 }
 
 export async function getCampaignById(id: string): Promise<Campaign | null> {
-  // Fast path local
+  // 1. Fast path local inmediato (< 5ms)
   const localList = getLocalCampaigns();
   const localFound = localList.find((c) => c.id === id);
   if (localFound) return localFound;
 
+  // 2. Consulta Firestore protegida con timeout
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
-      const docRef = doc(db, 'campaigns', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const remote = { id: snap.id, ...snap.data() } as Campaign;
-        saveLocalCampaigns([remote, ...localList.filter((c) => c.id !== remote.id)]);
-        return remote;
-      }
+      const docPromise = (async () => {
+        const docRef = doc(db, 'campaigns', id);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const remote = { id: snap.id, ...snap.data() } as Campaign;
+          saveLocalCampaigns([remote, ...localList.filter((c) => c.id !== remote.id)]);
+          return remote;
+        }
+        return null;
+      })();
+
+      const remote = await withTimeout(docPromise, 3500, null);
+      if (remote) return remote;
     } catch (err) {
       console.warn('Firebase error getting campaign by ID', err);
     }
@@ -646,23 +706,33 @@ export async function updateCampaignStatus(
 export async function getSubjects(campaignId: string): Promise<EvaluatedSubject[]> {
   const localSubjects = getLocalSubjects().filter((s) => s.campaignId === campaignId);
 
+  // Si ya tenemos sujetos en local, devolverlos inmediatamente y sincronizar en segundo plano
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
-    try {
+    const fetchPromise = (async () => {
       const q = query(collection(db, 'evaluated_subjects'), where('campaignId', '==', campaignId));
       const snap = await getDocs(q);
       if (!snap.empty) {
         const remote = snap.docs.map((d) => ({ id: d.id, ...d.data() } as EvaluatedSubject));
-        // Cache to local storage
         const allSubjects = getLocalSubjects().filter((s) => s.campaignId !== campaignId);
         saveLocalSubjects([...remote, ...allSubjects]);
         return remote;
-      } else if (localSubjects.length > 0) {
-        return localSubjects;
       }
-    } catch (err) {
-      console.warn('Firebase get subjects error', err);
-      if (localSubjects.length > 0) return localSubjects;
+      return localSubjects;
+    })();
+
+    if (localSubjects.length > 0) {
+      // Sincronización transparente en background
+      fetchPromise.catch(() => {});
+      return localSubjects;
+    }
+
+    // Si aún no hay nada en local, esperar con timeout máximo de 3 segundos
+    try {
+      const result = await withTimeout(fetchPromise, 3000, localSubjects);
+      return result || localSubjects;
+    } catch {
+      return localSubjects;
     }
   }
 
@@ -670,13 +740,26 @@ export async function getSubjects(campaignId: string): Promise<EvaluatedSubject[
 }
 
 export async function getSubjectById(id: string): Promise<EvaluatedSubject | null> {
+  // 1. Fast path local inmediato (< 2ms)
+  const cached = getCachedSubjectById(id);
+  if (cached) return cached;
+
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
     try {
-      const snap = await getDoc(doc(db, 'evaluated_subjects', id));
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as EvaluatedSubject;
-      }
+      const docPromise = (async () => {
+        const snap = await getDoc(doc(db, 'evaluated_subjects', id));
+        if (snap.exists()) {
+          const remote = { id: snap.id, ...snap.data() } as EvaluatedSubject;
+          const all = getLocalSubjects().filter((s) => s.id !== remote.id);
+          saveLocalSubjects([remote, ...all]);
+          return remote;
+        }
+        return null;
+      })();
+
+      const remote = await withTimeout(docPromise, 3000, null);
+      if (remote) return remote;
     } catch (err) {
       console.warn('Firebase get subject by ID error', err);
     }

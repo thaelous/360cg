@@ -9,6 +9,7 @@ import {
   query,
   where,
   deleteDoc,
+  writeBatch,
   Firestore,
 } from 'firebase/firestore';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats, EvaluatorRole, SurveyTemplate, TemplateQuestion } from '../types';
@@ -631,6 +632,7 @@ export async function createCampaign(data: {
   clientCode?: string;
   description?: string;
   deadline?: string;
+  durationDays?: number;
   competencyIds?: string[];
   templateId?: string;
   templateName?: string;
@@ -653,12 +655,20 @@ export async function createCampaign(data: {
     }
   }
 
+  // Nueva lógica de vigencia: si se define durationDays, la campaña inicia en 'pending_start'
+  // y startedAt / expiresAt permanecen nulos hasta que se registre la primera evaluación.
+  const duration = typeof data.durationDays === 'number' && data.durationDays > 0 ? data.durationDays : undefined;
+  const initialStatus = duration ? 'pending_start' : 'active';
+
   const newCampaign: Campaign = {
     id: `camp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     clientCode: code,
     companyName: data.companyName.trim(),
     description: data.description?.trim() || '',
-    status: 'active',
+    status: initialStatus,
+    durationDays: duration,
+    startedAt: null,
+    expiresAt: null,
     createdAt: new Date().toISOString(),
     deadline: data.deadline,
     competencyIds: data.competencyIds || DEFAULT_COMPETENCIES.map((c) => c.id),
@@ -685,7 +695,7 @@ export async function createCampaign(data: {
 
 export async function updateCampaignStatus(
   campaignId: string,
-  status: 'active' | 'closed'
+  status: 'active' | 'closed' | 'pending_start'
 ): Promise<void> {
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
@@ -804,6 +814,54 @@ export async function addSubject(data: {
   return newSubject;
 }
 
+export async function addBatchSubjects(
+  campaignId: string,
+  items: Array<{
+    name: string;
+    role: string;
+    department: string;
+    email?: string;
+    targetEvaluators?: number;
+  }>
+): Promise<EvaluatedSubject[]> {
+  const newSubjects: EvaluatedSubject[] = items.map((item, idx) => ({
+    id: `subj-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`,
+    campaignId,
+    name: item.name.trim(),
+    role: item.role?.trim() || 'Colaborador',
+    department: item.department?.trim() || 'General',
+    email: item.email?.trim() || '',
+    targetEvaluators: item.targetEvaluators && item.targetEvaluators > 0 ? item.targetEvaluators : 5,
+    createdAt: new Date().toISOString(),
+  }));
+
+  const db = getFirebaseDb();
+  if (shouldUseFirebase() && db && newSubjects.length > 0) {
+    try {
+      // Dividir en bloques de máximo 450 operaciones por batch de Firestore
+      const CHUNK_SIZE = 450;
+      for (let i = 0; i < newSubjects.length; i += CHUNK_SIZE) {
+        const chunk = newSubjects.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((sub) => {
+          const docRef = doc(db, 'evaluated_subjects', sub.id);
+          batch.set(docRef, sub);
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn('Firebase writeBatch failed, saving locally:', err);
+    }
+  }
+
+  // Guardar en caché local
+  const currentSubjects = getLocalSubjects();
+  const updatedSubjects = [...newSubjects, ...currentSubjects];
+  saveLocalSubjects(updatedSubjects);
+
+  return newSubjects;
+}
+
 export async function deleteSubject(subjectId: string): Promise<void> {
   const db = getFirebaseDb();
   if (shouldUseFirebase() && db) {
@@ -881,6 +939,26 @@ export async function submitResponse(data: {
     recommendations: string;
   };
 }): Promise<EvaluationResponse> {
+  // 1. Verificación previa de vigencia de la campaña
+  const campaign = await getCampaignById(data.campaignId);
+  if (campaign) {
+    if (campaign.status === 'closed') {
+      throw new Error('La campaña de evaluación se encuentra actualmente cerrada.');
+    }
+
+    if (campaign.expiresAt) {
+      const expTime = new Date(campaign.expiresAt).getTime();
+      if (!isNaN(expTime) && Date.now() > expTime) {
+        throw new Error('El periodo de evaluación para esta campaña ha concluido y no se permiten más respuestas.');
+      }
+    } else if (campaign.deadline && !campaign.durationDays) {
+      const deadTime = new Date(`${campaign.deadline}T23:59:59`).getTime();
+      if (!isNaN(deadTime) && Date.now() > deadTime) {
+        throw new Error('El periodo de evaluación para esta campaña ha concluido y no se permiten más respuestas.');
+      }
+    }
+  }
+
   const newResponse: EvaluationResponse = {
     id: `resp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     campaignId: data.campaignId,
@@ -900,7 +978,6 @@ export async function submitResponse(data: {
   if (shouldUseFirebase() && db) {
     try {
       await setDoc(doc(db, 'responses', newResponse.id), newResponse);
-      return newResponse;
     } catch (err) {
       console.warn('Firebase submit response error, saving locally', err);
     }
@@ -909,6 +986,47 @@ export async function submitResponse(data: {
   const responses = getLocalResponses();
   const updated = [newResponse, ...responses];
   saveLocalResponses(updated);
+
+  // 2. Disparador en la primera respuesta:
+  // Si la campaña asociada tiene startedAt en null o status === 'pending_start',
+  // actualiza startedAt a ahora, expiresAt a fecha actual + durationDays, y status a 'active'.
+  if (campaign && !campaign.startedAt) {
+    try {
+      const duration = campaign.durationDays || 30; // 30 días si no se especificó
+      const now = new Date();
+      const startedAt = now.toISOString();
+      const expiresAtDate = new Date(now.getTime() + duration * 24 * 60 * 60 * 1000);
+      const expiresAt = expiresAtDate.toISOString();
+      const deadline = expiresAtDate.toISOString().split('T')[0];
+
+      const patch: Partial<Campaign> = {
+        startedAt,
+        expiresAt,
+        deadline,
+        status: 'active',
+      };
+
+      if (shouldUseFirebase() && db) {
+        await updateDoc(doc(db, 'campaigns', campaign.id), patch).catch((err) => {
+          console.warn('Firebase error triggering campaign start', err);
+        });
+      }
+
+      const allCamps = getLocalCampaigns();
+      const updatedCamps = allCamps.map((c) =>
+        c.id === campaign.id
+          ? {
+              ...c,
+              ...patch,
+            }
+          : c
+      );
+      saveLocalCampaigns(updatedCamps);
+    } catch (err) {
+      console.error('Error activating campaign on first response', err);
+    }
+  }
+
   return newResponse;
 }
 

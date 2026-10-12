@@ -23,6 +23,8 @@ import {
   Sparkles,
   Layers,
   FileSpreadsheet,
+  Clock,
+  Hourglass,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats, SurveyTemplate } from '../../types';
 import {
@@ -34,6 +36,7 @@ import {
   calculateSubjectStats,
   getSurveyTemplates,
 } from '../../services/dataService';
+import { getCampaignValidityInfo } from '../../utils/campaignValidity';
 import { getAdminSession } from '../../services/authService';
 import { ShareQrModal } from '../ShareQrModal';
 import { SubjectReportModal } from '../Reports/SubjectReportModal';
@@ -69,7 +72,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     companyName: '',
     clientCode: '',
     description: '',
-    deadline: '',
+    durationDays: 30,
   });
 
   // Preview questionnaire modal
@@ -146,7 +149,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         companyName: newCampaignData.companyName.trim(),
         clientCode: newCampaignData.clientCode.trim() || undefined,
         description: newCampaignData.description.trim(),
-        deadline: newCampaignData.deadline || undefined,
+        durationDays: Number(newCampaignData.durationDays) || 30,
         templateId: chosenTemplate?.id,
         templateName: chosenTemplate?.name,
         questions: chosenTemplate?.questions,
@@ -154,7 +157,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       setCampaigns((prev) => [created, ...prev]);
       setIsCreateModalOpen(false);
-      setNewCampaignData({ companyName: '', clientCode: '', description: '', deadline: '' });
+      setNewCampaignData({ companyName: '', clientCode: '', description: '', durationDays: 30 });
     } catch (err) {
       console.error(err);
       alert('Error creando campaña');
@@ -380,6 +383,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             {filteredCampaigns.map((camp) => {
               const campSubjects = subjects.filter((s) => s.campaignId === camp.id);
               const campResponses = responses.filter((r) => r.campaignId === camp.id);
+              const validity = getCampaignValidityInfo(camp);
 
               return (
                 <div
@@ -405,13 +409,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           )}
                         </button>
                         <span
-                          className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-                            camp.status === 'active'
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              : 'bg-rose-50 text-rose-700 border-rose-200'
-                          }`}
+                          className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border inline-flex items-center gap-1.5 ${validity.statusBadge.colorClasses}`}
                         >
-                          {camp.status === 'active' ? '● Activa' : '● Cerrada'}
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${validity.statusBadge.dotClasses}`} />
+                          {validity.statusBadge.label}
                         </span>
                       </div>
 
@@ -467,12 +468,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <button
                         onClick={() => handleToggleStatus(camp)}
                         className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition flex items-center gap-1.5 ${
-                          camp.status === 'active'
+                          camp.status === 'active' || camp.status === 'pending_start'
                             ? 'text-slate-600 hover:text-rose-600 hover:bg-rose-50 border-slate-200'
                             : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
                         }`}
                       >
-                        {camp.status === 'active' ? (
+                        {camp.status === 'active' || camp.status === 'pending_start' ? (
                           <>
                             <Lock className="w-3.5 h-3.5" />
                             Cerrar Campaña
@@ -487,7 +488,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* Campaign Stats Mini-grid */}
+                  {/* Campaign Stats Mini-grid con estado dinámico de vigencia */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50/80 p-4 rounded-2xl border border-slate-100 text-xs">
                     <div>
                       <span className="text-slate-400 block">Evaluados Registrados:</span>
@@ -498,15 +499,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <span className="font-bold text-emerald-700 text-sm">{campResponses.length} cuestionarios</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Fecha de Creación:</span>
+                      <span className="text-slate-400 block">Fecha de Inicio:</span>
                       <span className="font-medium text-slate-700">
-                        {new Date(camp.createdAt).toLocaleDateString('es-ES')}
+                        {camp.startedAt ? (
+                          new Date(camp.startedAt).toLocaleString('es-ES', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })
+                        ) : camp.durationDays ? (
+                          <span className="text-amber-700 font-semibold inline-flex items-center gap-1">
+                            <Hourglass className="w-3 h-3 text-amber-500" />
+                            En espera (1ª respuesta)
+                          </span>
+                        ) : (
+                          new Date(camp.createdAt).toLocaleDateString('es-ES')
+                        )}
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Fecha Límite:</span>
+                      <span className="text-slate-400 block">
+                        {validity.hasStarted ? 'Fecha Límite Calculada:' : 'Vigencia Contratada:'}
+                      </span>
                       <span className="font-medium text-slate-700">
-                        {camp.deadline || 'Sin fecha de corte'}
+                        {validity.hasStarted ? (
+                          camp.expiresAt ? (
+                            <span className="flex items-center gap-1">
+                              <span>
+                                {new Date(camp.expiresAt).toLocaleString('es-ES', {
+                                  dateStyle: 'short',
+                                  timeStyle: 'short',
+                                })}
+                              </span>
+                              {validity.remainingDays !== null && (
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                    validity.isExpired
+                                      ? 'bg-rose-100 text-rose-700'
+                                      : validity.remainingDays <= 2
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-emerald-100 text-emerald-800'
+                                  }`}
+                                >
+                                  {validity.isExpired
+                                    ? 'Vencida'
+                                    : `${validity.remainingDays} d rest.`}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            camp.deadline || 'Sin fecha de corte'
+                          )
+                        ) : camp.durationDays ? (
+                          <span className="font-semibold text-slate-800">
+                            {camp.durationDays} días contratados
+                          </span>
+                        ) : (
+                          camp.deadline || 'Sin fecha de corte'
+                        )}
                       </span>
                     </div>
                   </div>
@@ -669,17 +718,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Fecha Límite / Cierre (Opcional)
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Duración de la campaña (días) *</span>
+                  <span className="text-[11px] text-indigo-600 font-normal">
+                    Comienza al recibir la 1ª evaluación
+                  </span>
                 </label>
-                <input
-                  type="date"
-                  value={newCampaignData.deadline}
-                  onChange={(e) =>
-                    setNewCampaignData({ ...newCampaignData, deadline: e.target.value })
-                  }
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    required
+                    placeholder="Ej. 7, 15, 30"
+                    value={newCampaignData.durationDays}
+                    onChange={(e) =>
+                      setNewCampaignData({
+                        ...newCampaignData,
+                        durationDays: Math.max(1, parseInt(e.target.value, 10) || 1),
+                      })
+                    }
+                    className="w-full text-xs font-bold px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <span className="absolute right-3 top-2 text-xs font-semibold text-slate-400">
+                    días contratados
+                  </span>
+                </div>
+                <div className="flex gap-1.5 mt-2">
+                  {[7, 15, 30, 60].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setNewCampaignData({ ...newCampaignData, durationDays: d })}
+                      className={`px-2.5 py-1 text-[11px] rounded-md font-semibold border transition ${
+                        newCampaignData.durationDays === d
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {d} días
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1.5 block leading-tight">
+                  La fecha límite se calculará automáticamente a partir del día y hora en que se envíe la primera evaluación 360°.
+                </span>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

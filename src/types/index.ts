@@ -50,14 +50,19 @@ export interface SurveyTemplate {
   createdAt: string;
 }
 
+export type CampaignStatus = 'active' | 'closed' | 'pending_start';
+
 export interface Campaign {
   id: string;
   clientCode: string; // e.g. CORP-2026-X
   companyName: string;
   description?: string;
-  status: 'active' | 'closed';
+  status: CampaignStatus;
   createdAt: string; // ISO string
   deadline?: string;
+  durationDays?: number;
+  startedAt?: string | null;
+  expiresAt?: string | null;
   competencyIds?: string[];
   templateId?: string;
   templateName?: string;

@@ -17,6 +17,8 @@ import {
   Shield,
   RotateCcw,
   Loader2,
+  Clock,
+  CalendarX,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -39,6 +41,7 @@ import {
   getCampaigns,
   withTimeout,
 } from '../../services/dataService';
+import { getCampaignValidityInfo } from '../../utils/campaignValidity';
 
 interface EvaluatorPortalProps {
   initialCode?: string;
@@ -413,9 +416,13 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
       });
 
       setStep('completed');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setErrorMsg('Error al guardar la evaluación. Por favor intenta nuevamente.');
+      const friendlyMessage =
+        err?.message && typeof err.message === 'string'
+          ? err.message
+          : 'Error al guardar la evaluación. Por favor intenta nuevamente.';
+      setErrorMsg(friendlyMessage);
     } finally {
       setSubmitting(false);
     }
@@ -588,6 +595,63 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   // 2. STEP: SELECT SUBJECT & EVALUATOR ROLE
   if (step === 'select_subject_role') {
     const isDirectAssignment = Boolean(targetSubjectId && selectedSubject);
+    const validity = campaign ? getCampaignValidityInfo(campaign) : null;
+
+    // Bloqueo amigable si la campaña está vencida o cerrada
+    if (validity && (!validity.canAcceptResponses || validity.isExpired)) {
+      return (
+        <div className="w-full max-w-lg mx-auto px-4 py-12 sm:py-16 text-center space-y-6">
+          <div className="bg-white rounded-3xl shadow-xl border border-slate-200/90 p-8 space-y-6">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mb-2 shadow-xs">
+                <CalendarX className="w-8 h-8 stroke-[2.5]" />
+              </div>
+              <span className="font-mono text-xs bg-rose-50 text-rose-700 font-bold px-3 py-1 rounded-full border border-rose-200 mt-2">
+                {campaign?.clientCode}
+              </span>
+            </div>
+
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                Periodo de Evaluación Concluido
+              </h2>
+              <p className="text-sm font-semibold text-slate-700 mt-1">
+                {campaign?.companyName}
+              </p>
+              <div className="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 leading-relaxed text-left space-y-2">
+                <p>
+                  El periodo contratado para la recepción de evaluaciones 360° en esta campaña ha finalizado.
+                </p>
+                {campaign?.expiresAt && (
+                  <p className="font-semibold text-slate-800">
+                    Fecha de cierre registrada:{' '}
+                    <span className="font-mono text-indigo-700">
+                      {new Date(campaign.expiresAt).toLocaleString('es-ES', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })}
+                    </span>
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-500">
+                  Agradecemos tu interés y participación. Si consideras que esto es un error, por favor contacta al coordinador de recursos humanos de tu empresa.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => setStep('code_entry')}
+                className="flex-1 py-3 px-4 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Ingresar con otro código
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="w-full max-w-3xl mx-auto px-4 py-6 sm:px-6 sm:py-10 space-y-6">

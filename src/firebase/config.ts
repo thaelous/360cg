@@ -12,6 +12,7 @@ import {
   where,
   doc,
   updateDoc,
+  writeBatch,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
@@ -138,6 +139,7 @@ export {
   where,
   doc,
   updateDoc,
+  writeBatch,
   onSnapshot,
   serverTimestamp,
   signInWithEmailAndPassword,

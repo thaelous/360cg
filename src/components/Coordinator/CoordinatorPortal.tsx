@@ -37,6 +37,8 @@ import { ShareQrModal } from '../ShareQrModal';
 import { SubjectReportModal } from '../Reports/SubjectReportModal';
 import { ExportCsvModal } from '../Admin/ExportCsvModal';
 import { exportMasterExcelReport } from '../../utils/exportMasterExcel';
+import { BulkUploadModal } from './BulkUploadModal';
+import { getCampaignValidityInfo } from '../../utils/campaignValidity';
 
 interface CoordinatorPortalProps {
   initialCode?: string;
@@ -60,6 +62,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isBulkUploadModalOpen, setIsBulkUploadModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [selectedSubjectForShare, setSelectedSubjectForShare] = useState<EvaluatedSubject | null>(null);
   const [reportSubjectStats, setReportSubjectStats] = useState<SubjectStats | null>(null);
@@ -68,6 +71,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [excelSuccessMsg, setExcelSuccessMsg] = useState('');
+  const [bulkSuccessMsg, setBulkSuccessMsg] = useState('');
   const [isLinkCopied, setIsLinkCopied] = useState(false);
 
   // New subject form
@@ -474,36 +478,57 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               </h1>
 
               {/* Badges informativos en una sola línea */}
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                {/* Estado: Campaña Activa */}
-                <span
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5 ${
-                    campaign.status === 'active'
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-rose-50 text-rose-700 border border-rose-200'
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      campaign.status === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
-                    }`}
-                  />
-                  {campaign.status === 'active' ? 'Campaña Activa' : 'Campaña Cerrada'}
-                </span>
+              {(() => {
+                const validity = getCampaignValidityInfo(campaign);
+                return (
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {/* Estado dinámico */}
+                    <span
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5 border ${validity.statusBadge.colorClasses}`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${validity.statusBadge.dotClasses}`}
+                      />
+                      {validity.statusBadge.label}
+                    </span>
 
-                {/* Código: CORP-2026-X */}
-                <span className="bg-slate-50 text-slate-600 border border-slate-200 font-mono text-xs px-2.5 py-1 rounded-full font-semibold">
-                  Código: {campaign.clientCode}
-                </span>
+                    {/* Código: CORP-2026-X */}
+                    <span className="bg-slate-50 text-slate-600 border border-slate-200 font-mono text-xs px-2.5 py-1 rounded-full font-semibold">
+                      Código: {campaign.clientCode}
+                    </span>
 
-                {/* Fecha de corte: Cierre: YYYY-MM-DD */}
-                {campaign.deadline && (
-                  <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    Cierre: {campaign.deadline}
-                  </span>
-                )}
-              </div>
+                    {/* Fecha de corte / Inicio */}
+                    {validity.hasStarted ? (
+                      campaign.expiresAt ? (
+                        <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          Cierre:{' '}
+                          {new Date(campaign.expiresAt).toLocaleDateString('es-ES', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                          })}
+                        </span>
+                      ) : campaign.deadline ? (
+                        <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          Cierre: {campaign.deadline}
+                        </span>
+                      ) : null
+                    ) : campaign.durationDays ? (
+                      <span className="bg-amber-50 text-amber-800 border border-amber-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        {campaign.durationDays} días contratados
+                      </span>
+                    ) : campaign.deadline ? (
+                      <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        Cierre: {campaign.deadline}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Descripción en texto gris suave */}
@@ -554,6 +579,15 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               </button>
 
               <button
+                onClick={() => setIsBulkUploadModalOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
+                title="Importar múltiples colaboradores mediante archivo Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                <span>Carga Masiva Excel</span>
+              </button>
+
+              <button
                 onClick={() => setIsAddModalOpen(true)}
                 className="bg-slate-900 hover:bg-black text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
               >
@@ -579,6 +613,27 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
             <button
               onClick={() => setExcelSuccessMsg('')}
               className="px-2.5 py-1 text-emerald-700 hover:bg-emerald-100 rounded-lg font-bold cursor-pointer"
+            >
+              Entendido
+            </button>
+          </div>
+        )}
+
+        {/* Notificación inline de éxito en Carga Masiva */}
+        {bulkSuccessMsg && (
+          <div className="p-4 bg-lime-50 border border-lime-300 rounded-2xl flex items-center justify-between gap-3 text-lime-950 text-xs shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-lime-200 rounded-lg text-lime-800">
+                <CheckCircle className="w-4 h-4" />
+              </div>
+              <div>
+                <strong className="block font-bold">Importación Masiva Exitosa</strong>
+                <span className="text-slate-600">{bulkSuccessMsg}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setBulkSuccessMsg('')}
+              className="px-2.5 py-1 text-lime-800 hover:bg-lime-200/60 rounded-lg font-bold cursor-pointer"
             >
               Entendido
             </button>
@@ -1030,6 +1085,43 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           subjects={subjects}
           responses={responses}
         />
+      )}
+
+      {/* BULK UPLOAD EXCEL MODAL */}
+      {isBulkUploadModalOpen && campaign && (
+        <BulkUploadModal
+          isOpen={isBulkUploadModalOpen}
+          onClose={() => setIsBulkUploadModalOpen(false)}
+          campaignId={campaign.id}
+          companyName={campaign.companyName}
+          onSuccess={(added) => {
+            setSubjects((prev) => [...added, ...prev]);
+            setBulkSuccessMsg(`Se importaron exitosamente ${added.length} colaboradores a la campaña.`);
+          }}
+        />
+      )}
+
+      {/* FLOATING SUCCESS TOAST FOR BULK UPLOAD */}
+      {bulkSuccessMsg && (
+        <div className="fixed bottom-24 right-6 z-50 max-w-md bg-slate-900 text-white border-2 border-lime-400 p-4 rounded-2xl shadow-2xl flex items-start gap-3 transition-all animate-in slide-in-from-bottom-5">
+          <div className="w-9 h-9 rounded-xl bg-lime-400/20 text-lime-400 flex items-center justify-center shrink-0 mt-0.5">
+            <CheckCircle className="w-5 h-5 text-lime-400" />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-xs font-black text-lime-400 uppercase tracking-wider flex items-center gap-1.5">
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Carga Masiva Exitosa
+            </h4>
+            <p className="text-xs text-slate-200 mt-1 leading-relaxed">{bulkSuccessMsg}</p>
+          </div>
+          <button
+            onClick={() => setBulkSuccessMsg('')}
+            className="p-1 text-slate-400 hover:text-white rounded-lg transition cursor-pointer"
+            title="Cerrar notificación"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
       {/* FLOATING SUCCESS TOAST */}

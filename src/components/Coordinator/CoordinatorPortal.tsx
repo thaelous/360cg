@@ -20,6 +20,9 @@ import {
   RefreshCw,
   Copy,
   Check,
+  FileDown,
+  FileText,
+  Loader2,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats } from '../../types';
 import {
@@ -39,6 +42,10 @@ import { ExportCsvModal } from '../Admin/ExportCsvModal';
 import { exportMasterExcelReport } from '../../utils/exportMasterExcel';
 import { BulkUploadModal } from './BulkUploadModal';
 import { getCampaignValidityInfo } from '../../utils/campaignValidity';
+import { downloadElementAsPdf } from '../../utils/pdfGenerator';
+import { IndividualReportPdfTemplate } from '../Reports/IndividualReportPdfTemplate';
+import { GeneralReportPdfTemplate } from '../Reports/GeneralReportPdfTemplate';
+import { CoordinatorAnalyticsDashboard } from './CoordinatorAnalyticsDashboard';
 
 interface CoordinatorPortalProps {
   initialCode?: string;
@@ -70,9 +77,13 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingIndividualPdf, setIsExportingIndividualPdf] = useState<string | null>(null);
+  const [isExportingGeneralPdf, setIsExportingGeneralPdf] = useState(false);
+  const [pdfGeneratingSubject, setPdfGeneratingSubject] = useState<EvaluatedSubject | null>(null);
   const [excelSuccessMsg, setExcelSuccessMsg] = useState('');
   const [bulkSuccessMsg, setBulkSuccessMsg] = useState('');
   const [isLinkCopied, setIsLinkCopied] = useState(false);
+  const [isCodeCopied, setIsCodeCopied] = useState(false);
 
   // New subject form
   const [newSubject, setNewSubject] = useState({
@@ -224,17 +235,71 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
     setIsReportModalOpen(true);
   };
 
-  const handleDownloadReport = (sub: EvaluatedSubject) => {
+  const handleDownloadIndividualPdf = async (sub: EvaluatedSubject) => {
     const subResponses = responses.filter((r) => r.subjectId === sub.id);
-    if (subResponses.length === 0) return;
-    const calculated = calculateSubjectStats(sub, subResponses);
-    setReportSubjectStats(calculated);
-    setReportSubjectResponses(subResponses);
-    setIsReportModalOpen(true);
-    // Trigger print dialog using print-friendly CSS media query for PDF generation
-    setTimeout(() => {
-      window.print();
-    }, 300);
+    if (subResponses.length === 0) {
+      alert('Aún no se han recibido evaluaciones para este colaborador.');
+      return;
+    }
+    if (!campaign) return;
+
+    setIsExportingIndividualPdf(sub.id);
+    setPdfGeneratingSubject(sub);
+
+    try {
+      // Esperar brevemente a que React monte la plantilla invisible en el DOM
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const el = document.getElementById(`pdf-individual-${sub.id}`);
+      if (!el) {
+        throw new Error('No se encontró el contenedor de la plantilla');
+      }
+
+      const safeName = sub.name.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_ -]/g, '').trim().replace(/\s+/g, '_');
+      const filename = `Reporte_Individual_${safeName}.pdf`;
+
+      await downloadElementAsPdf(el, { filename });
+      setExcelSuccessMsg(`Reporte PDF de ${sub.name} generado y descargado exitosamente.`);
+    } catch (err) {
+      console.error('Error generando PDF individual:', err);
+      alert('Hubo un problema al generar el archivo PDF. Intenta nuevamente.');
+    } finally {
+      setIsExportingIndividualPdf(null);
+      setPdfGeneratingSubject(null);
+    }
+  };
+
+  const handleDownloadGeneralPdf = async () => {
+    if (!campaign) return;
+    if (responses.length === 0) {
+      alert('Aún no se han recibido evaluaciones para generar el reporte general de la empresa.');
+      return;
+    }
+
+    setIsExportingGeneralPdf(true);
+
+    try {
+      // Esperar a que la plantilla invisible se monte
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const el = document.getElementById(`pdf-general-${campaign.id}`);
+      if (!el) {
+        throw new Error('No se encontró el contenedor del reporte general');
+      }
+
+      const safeCompany = campaign.companyName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_ -]/g, '').trim().replace(/\s+/g, '_');
+      const filename = `Reporte_General_${safeCompany}.pdf`;
+
+      await downloadElementAsPdf(el, { filename, marginMm: 0 });
+      setExcelSuccessMsg(`Reporte Ejecutivo General de ${campaign.companyName} generado y descargado exitosamente.`);
+    } catch (err) {
+      console.error('Error generando PDF general:', err);
+      alert('Hubo un problema al generar el Reporte General en PDF. Intenta nuevamente.');
+    } finally {
+      setIsExportingGeneralPdf(false);
+    }
+  };
+
+  const handleDownloadReport = (sub: EvaluatedSubject) => {
+    handleDownloadIndividualPdf(sub);
   };
 
   const handleDownloadMasterExcel = async () => {
@@ -258,7 +323,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
         console.warn('Usando respuestas en memoria:', err);
       }
 
-      const generatedFileName = exportMasterExcelReport(campaign, subjects, currentResponses);
+      const generatedFileName = await exportMasterExcelReport(campaign, subjects, currentResponses);
       setExcelSuccessMsg(
         `¡Reporte "${generatedFileName}" descargado con éxito! Se consolidaron ${subjects.length} colaboradores y ${currentResponses.length} evaluaciones.`
       );
@@ -286,6 +351,13 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
     navigator.clipboard.writeText(link);
     setIsLinkCopied(true);
     setTimeout(() => setIsLinkCopied(false), 2500);
+  };
+
+  const handleCopyClientCode = () => {
+    if (!campaign?.clientCode) return;
+    navigator.clipboard.writeText(campaign.clientCode);
+    setIsCodeCopied(true);
+    setTimeout(() => setIsCodeCopied(false), 2000);
   };
 
   // If not logged in with client code
@@ -468,131 +540,164 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
       {/* Screen-Only Coordinator Dashboard */}
       <div className="space-y-6 print:hidden">
-        {/* 1. HERO DE CAMPAÑA: Cabecera Ejecutiva en Dos Niveles (Espaciosa y sin Empalmes) */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm">
-          {/* Nivel Superior: Fila de Título a lo ancho completo */}
-          <div className="w-full space-y-2">
-            <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-3">
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight break-words">
+        {/* 1. HERO DE CAMPAÑA: Cabecera Ejecutiva y Barra de Acciones */}
+        <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm">
+          {/* Estructura del Encabezado */}
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            {/* Arriba a la izquierda: Nombre de la empresa y descripción debajo en tono gris tenue */}
+            <div className="space-y-1 max-w-2xl">
+              <h1 className="text-2xl font-bold text-slate-900 tracking-tight break-words">
                 {campaign.companyName || (campaign as any).name || 'Empresa'}
               </h1>
-
-              {/* Badges informativos en una sola línea */}
-              {(() => {
-                const validity = getCampaignValidityInfo(campaign);
-                return (
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {/* Estado dinámico */}
-                    <span
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5 border ${validity.statusBadge.colorClasses}`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${validity.statusBadge.dotClasses}`}
-                      />
-                      {validity.statusBadge.label}
-                    </span>
-
-                    {/* Código: CORP-2026-X */}
-                    <span className="bg-slate-50 text-slate-600 border border-slate-200 font-mono text-xs px-2.5 py-1 rounded-full font-semibold">
-                      Código: {campaign.clientCode}
-                    </span>
-
-                    {/* Fecha de corte / Inicio */}
-                    {validity.hasStarted ? (
-                      campaign.expiresAt ? (
-                        <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          Cierre:{' '}
-                          {new Date(campaign.expiresAt).toLocaleDateString('es-ES', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                          })}
-                        </span>
-                      ) : campaign.deadline ? (
-                        <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          Cierre: {campaign.deadline}
-                        </span>
-                      ) : null
-                    ) : campaign.durationDays ? (
-                      <span className="bg-amber-50 text-amber-800 border border-amber-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-amber-600" />
-                        {campaign.durationDays} días contratados
-                      </span>
-                    ) : campaign.deadline ? (
-                      <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-slate-400" />
-                        Cierre: {campaign.deadline}
-                      </span>
-                    ) : null}
-                  </div>
-                );
-              })()}
+              <p className="text-slate-500 text-sm leading-relaxed">
+                {campaign.description || 'Gestión centralizada del proceso de evaluación de desempeño 360°'}
+              </p>
             </div>
 
-            {/* Descripción en texto gris suave */}
-            <p className="text-slate-500 text-sm max-w-3xl mt-1.5 leading-relaxed">
-              {campaign.description || 'Gestión centralizada del proceso de evaluación de desempeño 360°'}
-            </p>
+            {/* Arriba a la derecha: Una fila ordenada con las insignias (chips) */}
+            {(() => {
+              const validity = getCampaignValidityInfo(campaign);
+              return (
+                <div className="flex flex-wrap items-center gap-2 shrink-0 md:justify-end">
+                  {/* Badge de estado de vigencia con punto de color */}
+                  <span
+                    className={`text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5 border ${validity.statusBadge.colorClasses}`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${validity.statusBadge.dotClasses}`}
+                    />
+                    {validity.statusBadge.label}
+                  </span>
+
+                  {/* Badge del Código de Campaña con ícono de copiar */}
+                  <button
+                    type="button"
+                    onClick={handleCopyClientCode}
+                    className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-mono text-xs px-2.5 py-1 rounded-full font-semibold inline-flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                    title="Copiar código de campaña"
+                  >
+                    <span>Código: {campaign.clientCode}</span>
+                    {isCodeCopied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 shrink-0" />
+                    )}
+                  </button>
+
+                  {/* Chip de vigencia / fecha límite */}
+                  {validity.hasStarted && campaign.expiresAt ? (
+                    <span className="bg-slate-50 text-slate-600 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      Cierre:{' '}
+                      {new Date(campaign.expiresAt).toLocaleDateString('es-ES', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                      })}
+                    </span>
+                  ) : campaign.durationDays && !validity.hasStarted ? (
+                    <span className="bg-amber-50 text-amber-800 border border-amber-200 text-xs px-2.5 py-1 rounded-full font-medium inline-flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      {campaign.durationDays} días contratados
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Nivel Inferior: Barra de Acciones Ejecutiva */}
-          <div className="pt-4 mt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            {/* Lado izquierdo: Botón principal destacado */}
-            <button
-              onClick={handleDownloadMasterExcel}
-              disabled={isExportingExcel || responses.length === 0}
-              className="bg-lime-500 hover:bg-lime-600 disabled:opacity-50 disabled:hover:bg-lime-500 text-slate-950 font-bold px-5 py-2.5 rounded-xl shadow-sm flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed transition"
-              title={
-                responses.length > 0
-                  ? `Descargar Reporte Maestro en Excel (${responses.length} evaluaciones consolidadas)`
-                  : 'Esperando evaluaciones para generar el reporte maestro'
-              }
-            >
-              {isExportingExcel ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-slate-950 shrink-0" />
-                  <span>Generando Excel...</span>
-                </>
-              ) : (
-                <>
-                  <FileSpreadsheet className="w-4 h-4 text-slate-950 shrink-0" />
-                  <span>Descargar Reporte Maestro (.xlsx)</span>
-                  {responses.length > 0 && (
-                    <span className="ml-1 text-[11px] bg-slate-950 text-lime-400 px-1.5 py-0.5 rounded-md font-mono font-bold">
-                      {responses.length}
-                    </span>
-                  )}
-                </>
-              )}
-            </button>
-
-            {/* Lado derecho: Botones secundarios ordenados */}
+          {/* Barra de Acciones Organizada (Button Bar) */}
+          <div className="pt-4 mt-5 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+            {/* Bloque de Gestión de Colaboradores (Izquierda) */}
             <div className="flex flex-wrap items-center gap-2.5">
+              {/* Botón Primario: + Registrar Colaborador */}
               <button
-                onClick={() => handleOpenShare()}
-                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
-              >
-                <QrCode className="w-4 h-4 text-slate-700" />
-                <span>Código QR de Campaña</span>
-              </button>
-
-              <button
-                onClick={() => setIsBulkUploadModalOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
-                title="Importar múltiples colaboradores mediante archivo Excel (.xlsx)"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                <span>Carga Masiva Excel</span>
-              </button>
-
-              <button
+                type="button"
                 onClick={() => setIsAddModalOpen(true)}
                 className="bg-slate-900 hover:bg-black text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
               >
                 <UserPlus className="w-4 h-4" />
                 <span>+ Registrar Colaborador</span>
+              </button>
+
+              {/* Botón Secundario: Carga Masiva Excel */}
+              <button
+                type="button"
+                onClick={() => setIsBulkUploadModalOpen(true)}
+                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
+                title="Importar múltiples colaboradores mediante archivo Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-slate-600" />
+                <span>Carga Masiva Excel</span>
+              </button>
+
+              {/* Botón Auxiliar: Código QR */}
+              <button
+                type="button"
+                onClick={() => handleOpenShare()}
+                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium px-3.5 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
+                title="Ver código QR de acceso a la campaña"
+              >
+                <QrCode className="w-4 h-4 text-slate-600" />
+                <span>Código QR</span>
+              </button>
+            </div>
+
+            {/* Bloque de Reportes e Informes (Derecha) */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Botón Reporte Ejecutivo (PDF) */}
+              <button
+                type="button"
+                onClick={handleDownloadGeneralPdf}
+                disabled={isExportingGeneralPdf || responses.length === 0}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer disabled:cursor-not-allowed transition"
+                title={
+                  responses.length > 0
+                    ? `Descargar Reporte Ejecutivo en PDF (${campaign.companyName})`
+                    : 'Esperando evaluaciones para generar el Reporte Ejecutivo'
+                }
+              >
+                {isExportingGeneralPdf ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white shrink-0" />
+                    <span>Generando PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="w-4 h-4 text-white shrink-0" />
+                    <span>Reporte Ejecutivo (PDF)</span>
+                  </>
+                )}
+              </button>
+
+              {/* Botón Exportar Datos (.xlsx) */}
+              <button
+                type="button"
+                onClick={handleDownloadMasterExcel}
+                disabled={isExportingExcel || responses.length === 0}
+                className="bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed transition"
+                title={
+                  responses.length > 0
+                    ? `Exportar datos consolidados en Excel (${responses.length} evaluaciones)`
+                    : 'Esperando evaluaciones para exportar datos'
+                }
+              >
+                {isExportingExcel ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-600 shrink-0" />
+                    <span>Exportando...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Exportar Datos (.xlsx)</span>
+                    {responses.length > 0 && (
+                      <span className="ml-1 text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded-md font-mono font-medium">
+                        {responses.length}
+                      </span>
+                    )}
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -742,7 +847,14 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </div>
         </div>
 
-        {/* 4. TABLA DE COLABORADORES (Diseño SaaS Corporativo Sin Saturación) */}
+        {/* 4. DASHBOARD VISUAL (RECHARTS): TENDENCIA DIARIA Y ESTADO GENERAL EN DONA */}
+        <CoordinatorAnalyticsDashboard
+          campaign={campaign}
+          subjects={subjects}
+          responses={responses}
+        />
+
+        {/* 5. TABLA DE COLABORADORES (Diseño SaaS Corporativo Sin Saturación) */}
         <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
           {/* Table header bar */}
           <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -875,8 +987,32 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
                     </div>
 
                     {/* Columna 4: Acciones Limpias y Unificadas */}
-                    <div className="flex items-center gap-2 shrink-0 pt-2 lg:pt-0">
-                      {/* Ver Informe (botón primario sutil) */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0 pt-2 lg:pt-0">
+                      {/* Botón Reporte PDF Individual */}
+                      <button
+                        onClick={() => handleDownloadIndividualPdf(sub)}
+                        disabled={subResponses.length === 0 || isExportingIndividualPdf === sub.id}
+                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shadow-xs"
+                        title={
+                          subResponses.length > 0
+                            ? `Descargar Reporte PDF Individual de ${sub.name}`
+                            : 'Esperando evaluaciones para generar el reporte'
+                        }
+                      >
+                        {isExportingIndividualPdf === sub.id ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-700" />
+                            <span>Generando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileDown className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>Reporte PDF Individual</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Ver Informe (botón modal) */}
                       <button
                         onClick={() => handleOpenReport(sub)}
                         disabled={subResponses.length === 0}
@@ -885,21 +1021,6 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
                       >
                         <BarChart3 className="w-3.5 h-3.5" />
                         <span>Ver Informe</span>
-                      </button>
-
-                      {/* Descargar PDF (icono discreto) */}
-                      <button
-                        onClick={() => handleDownloadReport(sub)}
-                        disabled={subResponses.length === 0}
-                        className="p-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-medium transition cursor-pointer disabled:cursor-not-allowed"
-                        title={
-                          subResponses.length > 0
-                            ? 'Descargar reporte individual en PDF'
-                            : 'Esperando evaluaciones para generar el reporte'
-                        }
-                        aria-label="Descargar PDF"
-                      >
-                        <Download className="w-3.5 h-3.5" />
                       </button>
 
                       {/* QR Individual */}
@@ -1146,6 +1267,39 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </button>
         </div>
       )}
+      {/* HIDDEN TEMPLATES FOR INSTANT IN-BROWSER PDF GENERATION */}
+      <div
+        style={{
+          position: 'fixed',
+          left: '-9999px',
+          top: '-9999px',
+          width: '216mm',
+          opacity: 0,
+          pointerEvents: 'none',
+          zIndex: -1,
+        }}
+        aria-hidden="true"
+      >
+        {/* Plantilla General de Empresa */}
+        {campaign && (
+          <GeneralReportPdfTemplate
+            campaign={campaign}
+            subjects={subjects}
+            responses={responses}
+            customQuestions={campaign.questions}
+          />
+        )}
+
+        {/* Plantilla Individual para el colaborador en descarga o todos */}
+        {campaign && pdfGeneratingSubject && (
+          <IndividualReportPdfTemplate
+            campaign={campaign}
+            subject={pdfGeneratingSubject}
+            responses={responses.filter((r) => r.subjectId === pdfGeneratingSubject.id)}
+            customQuestions={campaign.questions}
+          />
+        )}
+      </div>
     </div>
   );
 };

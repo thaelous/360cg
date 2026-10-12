@@ -14,9 +14,12 @@ import {
   AlertTriangle,
   Download,
   Table,
+  FileDown,
+  Loader2,
 } from 'lucide-react';
 import { SubjectStats, EvaluationResponse, EVALUATOR_ROLES_INFO, EvaluatorRole, TemplateQuestion } from '../../types';
 import { DEFAULT_COMPETENCIES } from '../../constants/competencies';
+import { downloadElementAsPdf } from '../../utils/pdfGenerator';
 
 interface SubjectReportModalProps {
   isOpen: boolean;
@@ -73,10 +76,30 @@ export const SubjectReportModal: React.FC<SubjectReportModalProps> = ({
     return { label: 'Requiere Plan de Acción', color: 'bg-rose-100 text-rose-800 border-rose-300' };
   };
 
+  const [isExportingPdf, setIsExportingPdf] = React.useState(false);
+  const printableRef = React.useRef<HTMLDivElement>(null);
+
   const badge = getPerformanceBadge(overallAverage);
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!printableRef.current) return;
+    setIsExportingPdf(true);
+    try {
+      const safeName = subject.name.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_ -]/g, '').trim().replace(/\s+/g, '_');
+      await downloadElementAsPdf(printableRef.current, {
+        filename: `Reporte_Individual_${safeName}.pdf`,
+      });
+    } catch (err) {
+      console.error('Error generando PDF desde modal:', err);
+      // Fallback a print
+      window.print();
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   return (
@@ -95,13 +118,23 @@ export const SubjectReportModal: React.FC<SubjectReportModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handlePrint}
-              className="px-3.5 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-              title="Download Report (PDF) - Descargar reporte oficial en PDF"
+              onClick={handleDownloadPdf}
+              disabled={isExportingPdf}
+              className="px-3.5 py-1.5 bg-lime-500 hover:bg-lime-400 disabled:opacity-50 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              title="Descargar reporte individual en PDF directamente"
               aria-label="Download Report"
             >
-              <Download className="w-4 h-4 stroke-[2.5]" />
-              <span>Download Report (PDF)</span>
+              {isExportingPdf ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin stroke-[2.5]" />
+                  <span>Generando PDF...</span>
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-4 h-4 stroke-[2.5]" />
+                  <span>Reporte PDF Individual</span>
+                </>
+              )}
             </button>
             <button
               onClick={handlePrint}
@@ -121,7 +154,7 @@ export const SubjectReportModal: React.FC<SubjectReportModalProps> = ({
         </div>
 
         {/* Printable Document Body */}
-        <div className="p-6 sm:p-8 overflow-y-auto space-y-8 print:p-0 print:space-y-6 print:overflow-visible">
+        <div ref={printableRef} className="p-6 sm:p-8 overflow-y-auto space-y-8 print:p-0 print:space-y-6 print:overflow-visible bg-white">
           {/* Print-Only Official Branding Header */}
           <div className="hidden print:flex items-center justify-between pb-4 mb-2 border-b-2 border-slate-900 print-avoid-break">
             <div className="flex items-center gap-3">

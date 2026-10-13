@@ -20,16 +20,23 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
   responses,
 }) => {
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isExportingMaster, setIsExportingMaster] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleExportMasterExcel = () => {
+  const handleExportMasterExcel = async () => {
+    setIsExportingMaster(true);
+    setErrorMessage(null);
     try {
-      const filename = exportMasterExcelReport(campaign, subjects, responses);
+      const filename = await exportMasterExcelReport(campaign, subjects, responses);
       setDownloadSuccess(`¡Archivo Súper Maestro "${filename}" descargado con éxito!`);
       setTimeout(() => setDownloadSuccess(null), 4000);
     } catch (err: any) {
-      alert('Error generando Excel maestro: ' + (err?.message || err));
+      setErrorMessage('Error generando Excel maestro: ' + (err?.message || err));
+      setTimeout(() => setErrorMessage(null), 5000);
+    } finally {
+      setIsExportingMaster(false);
     }
   };
 
@@ -85,6 +92,13 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
             </div>
           )}
 
+          {errorMessage && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
+              <X className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           <div className="space-y-1">
             <p className="text-xs text-slate-500">
               Selecciona el tipo de reporte que deseas descargar para análisis externo en Microsoft Excel, Google Sheets, PowerBI o software estadístico. Compatible con caracteres especiales (UTF-8 con BOM).
@@ -111,11 +125,11 @@ export const ExportCsvModal: React.FC<ExportCsvModalProps> = ({
               </div>
               <button
                 onClick={handleExportMasterExcel}
-                disabled={responses.length === 0}
+                disabled={responses.length === 0 || isExportingMaster}
                 className="px-4 py-2.5 bg-lime-500 hover:bg-lime-600 disabled:opacity-50 text-slate-900 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition shadow-xs self-start sm:self-center border border-lime-400 cursor-pointer disabled:cursor-not-allowed"
               >
                 <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-                Descargar Excel (.xlsx)
+                {isExportingMaster ? 'Generando Excel...' : 'Descargar Excel (.xlsx)'}
               </button>
             </div>
 

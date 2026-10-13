@@ -226,19 +226,34 @@ async function getXlsxLibrary(): Promise<any> {
   }
 
   if (typeof window !== 'undefined') {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const existing = document.querySelector('script[data-lib="xlsx-js-style"]');
       if (existing) {
-        existing.addEventListener('load', () => resolve((window as any).XLSX));
-        existing.addEventListener('error', () => reject(new Error('Failed to load xlsx-js-style')));
+        if ((window as any).XLSX) {
+          resolve((window as any).XLSX);
+          return;
+        }
+        existing.addEventListener('load', () => resolve((window as any).XLSX || XLSX));
+        existing.addEventListener('error', () => resolve(XLSX));
         return;
       }
       const script = document.createElement('script');
       script.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
       script.async = true;
       script.setAttribute('data-lib', 'xlsx-js-style');
-      script.onload = () => resolve((window as any).XLSX || XLSX);
-      script.onerror = () => resolve(XLSX);
+
+      const timeout = setTimeout(() => {
+        resolve(XLSX);
+      }, 5000);
+
+      script.onload = () => {
+        clearTimeout(timeout);
+        resolve((window as any).XLSX || XLSX);
+      };
+      script.onerror = () => {
+        clearTimeout(timeout);
+        resolve(XLSX);
+      };
       document.head.appendChild(script);
     });
   }

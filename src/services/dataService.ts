@@ -4,19 +4,23 @@ import {
   getDocs,
   getDoc,
   setDoc,
-  addDoc,
   updateDoc,
   query,
   where,
   deleteDoc,
   writeBatch,
-  Firestore,
+  type Firestore,
 } from 'firebase/firestore';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats, EvaluatorRole, SurveyTemplate, TemplateQuestion } from '../types';
 import { getFirebaseDb, isFirebaseConfigured } from '../firebase/config';
 import { INITIAL_CAMPAIGNS, INITIAL_SUBJECTS, INITIAL_RESPONSES } from '../data/mockData';
 import { DEFAULT_COMPETENCIES } from '../constants/competencies';
 import { DEFAULT_SURVEY_TEMPLATES } from '../constants/defaultTemplates';
+import {
+  migrateSurveyTemplate,
+  standardizeAndMigrateQuestions,
+  REQUIRED_QUESTIONS_PER_TEMPLATE,
+} from '../utils/templateMigration';
 
 const LS_CAMPAIGNS_KEY = 'talent360_local_campaigns';
 const LS_SUBJECTS_KEY = 'talent360_local_subjects';
@@ -106,12 +110,6 @@ function saveLocalResponses(responses: EvaluationResponse[]) {
   localStorage.setItem(LS_RESPONSES_KEY, JSON.stringify(responses));
 }
 
-import {
-  migrateSurveyTemplate,
-  standardizeAndMigrateQuestions,
-  REQUIRED_QUESTIONS_PER_TEMPLATE,
-} from '../utils/templateMigration';
-
 // TEMPLATE LOCAL STORAGE HELPERS
 function getLocalTemplates(): SurveyTemplate[] {
   try {
@@ -168,7 +166,6 @@ export async function seedDefaultTemplatesToFirestore(dbInstance?: Firestore | n
     for (const tpl of DEFAULT_SURVEY_TEMPLATES) {
       await setDoc(doc(targetDb, 'survey_templates', tpl.id), tpl);
     }
-    console.log('5 default survey templates seeded to Firestore (20 questions each)');
   } catch (err) {
     console.warn('Error seeding survey templates to Firestore:', err);
   }
@@ -197,7 +194,6 @@ export async function getSurveyTemplates(): Promise<SurveyTemplate[]> {
           // Validate and migrate custom or imported templates
           const { migrated, changed } = migrateSurveyTemplate(item);
           if (changed) {
-            console.log(`Migrated template "${item.name}" to 20 questions standard in Firestore`);
             await setDoc(doc(db, 'survey_templates', item.id), migrated);
           }
           normalized.push(migrated);
@@ -440,7 +436,6 @@ export async function seedMockDataToFirestore(dbInstance?: Firestore | null) {
     for (const t of DEFAULT_SURVEY_TEMPLATES) {
       await setDoc(doc(targetDb, 'survey_templates', t.id), t);
     }
-    console.log('Initial 360 data & templates seeded to Firestore');
   } catch (err) {
     console.warn('Auto-seed to Firestore note:', err);
   }
@@ -1172,7 +1167,7 @@ export function calculateSubjectStats(
     gapAnalysis: {
       selfAverage: selfAvg,
       othersAverage: othersAvg,
-      difference: selfAvg && othersAvg ? Number((selfAvg - othersAvg).toFixed(2)) : 0,
+      difference: selfCount > 0 && othersCount > 0 ? Number((selfAvg - othersAvg).toFixed(2)) : 0,
     },
   };
 }

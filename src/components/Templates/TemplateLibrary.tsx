@@ -10,11 +10,10 @@ import {
   Eye,
   CheckCircle,
   Search,
-  Sparkles,
-  Layers,
   FileSpreadsheet,
   RefreshCw,
-  Building,
+  AlertCircle,
+  Sparkles,
 } from 'lucide-react';
 import { SurveyTemplate } from '../../types';
 import {
@@ -37,9 +36,13 @@ export const TemplateLibrary: React.FC = () => {
   // Modals state
   const [selectedTemplateForView, setSelectedTemplateForView] = useState<SurveyTemplate | null>(null);
   const [selectedTemplateForEdit, setSelectedTemplateForEdit] = useState<SurveyTemplate | null>(null);
+  const [templateToDelete, setTemplateToDelete] = useState<SurveyTemplate | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
   useEffect(() => {
     loadTemplates();
@@ -52,6 +55,7 @@ export const TemplateLibrary: React.FC = () => {
       setTemplates(list);
     } catch (err) {
       console.error('Error loading templates:', err);
+      showError('Error al conectar con la biblioteca de plantillas.');
     } finally {
       setLoading(false);
     }
@@ -63,35 +67,34 @@ export const TemplateLibrary: React.FC = () => {
       setTemplates((prev) => [duplicated, ...prev]);
       showNotice(`Plantilla "${template.name}" duplicada como copia editable.`);
     } catch (err: any) {
-      alert('Error al duplicar: ' + (err?.message || err));
+      showError('Error al duplicar plantilla: ' + (err?.message || err));
     }
   };
 
-  const handleDelete = async (template: SurveyTemplate) => {
-    const confirmMsg = template.isDefault
-      ? `¿Estás seguro de eliminar la plantilla del sistema "${template.name}"? Podrás restaurarla después si lo deseas.`
-      : `¿Eliminar la plantilla "${template.name}"?`;
-
-    if (!confirm(confirmMsg)) return;
-
+  const handleConfirmDelete = async () => {
+    if (!templateToDelete) return;
+    setIsDeleting(true);
     try {
-      await deleteSurveyTemplate(template.id);
-      setTemplates((prev) => prev.filter((t) => t.id !== template.id));
-      showNotice(`Plantilla "${template.name}" eliminada.`);
+      await deleteSurveyTemplate(templateToDelete.id);
+      setTemplates((prev) => prev.filter((t) => t.id !== templateToDelete.id));
+      showNotice(`Plantilla "${templateToDelete.name}" eliminada.`);
+      setTemplateToDelete(null);
     } catch (err: any) {
-      alert('Error al eliminar plantilla: ' + (err?.message || err));
+      showError('Error al eliminar plantilla: ' + (err?.message || err));
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  const handleRestoreDefaults = async () => {
-    if (!confirm('¿Restablecer las 5 plantillas por defecto del sistema en Firestore?')) return;
+  const handleConfirmRestoreDefaults = async () => {
+    setShowRestoreModal(false);
     setLoading(true);
     try {
       await seedDefaultTemplatesToFirestore();
       await loadTemplates();
       showNotice('Las 5 plantillas base del sistema han sido restauradas exitosamente.');
     } catch (err: any) {
-      alert('Error al restaurar plantillas: ' + (err?.message || err));
+      showError('Error al restaurar plantillas: ' + (err?.message || err));
     } finally {
       setLoading(false);
     }
@@ -112,7 +115,7 @@ export const TemplateLibrary: React.FC = () => {
         );
       }
     } catch (err: any) {
-      alert('Error ejecutando migración: ' + (err?.message || err));
+      showError('Error ejecutando migración: ' + (err?.message || err));
     } finally {
       setLoading(false);
     }
@@ -120,7 +123,14 @@ export const TemplateLibrary: React.FC = () => {
 
   const showNotice = (msg: string) => {
     setActionNotice(msg);
+    setErrorNotice(null);
     setTimeout(() => setActionNotice(null), 4500);
+  };
+
+  const showError = (msg: string) => {
+    setErrorNotice(msg);
+    setActionNotice(null);
+    setTimeout(() => setErrorNotice(null), 5000);
   };
 
   const filteredTemplates = templates.filter(
@@ -182,6 +192,13 @@ export const TemplateLibrary: React.FC = () => {
         </div>
       )}
 
+      {errorNotice && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-2xl flex items-center gap-2 shadow-xs">
+          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>{errorNotice}</span>
+        </div>
+      )}
+
       {/* Filter and utilities bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="relative w-full sm:w-80">
@@ -215,7 +232,7 @@ export const TemplateLibrary: React.FC = () => {
           </button>
 
           <button
-            onClick={handleRestoreDefaults}
+            onClick={() => setShowRestoreModal(true)}
             className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-medium flex items-center gap-1.5 transition shadow-xs"
             title="Restaurar las 5 plantillas por defecto en Firestore"
           >
@@ -333,7 +350,7 @@ export const TemplateLibrary: React.FC = () => {
                   </button>
 
                   <button
-                    onClick={() => handleDelete(template)}
+                    onClick={() => setTemplateToDelete(template)}
                     className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition"
                     title="Eliminar plantilla"
                   >
@@ -355,6 +372,78 @@ export const TemplateLibrary: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* MODAL: CONFIRMAR ELIMINAR PLANTILLA */}
+      {templateToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">¿Eliminar Plantilla?</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                ¿Estás seguro de eliminar <strong>"{templateToDelete.name}"</strong>?
+                {templateToDelete.isDefault && (
+                  <span className="block mt-1 text-slate-400 text-[11px]">
+                    (Es una plantilla base del sistema; podrás restaurarla si lo necesitas).
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setTemplateToDelete(null)}
+                className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="flex-1 py-2 px-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+              >
+                {isDeleting ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIRMAR RESTAURAR 5 PLANTILLAS BASE */}
+      {showRestoreModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto">
+              <RefreshCw className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">¿Restaurar Plantillas Base?</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Se reestablecerán las 5 plantillas oficiales por defecto en la base de datos Firestore (cada una estandarizada con 20 preguntas).
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowRestoreModal(false)}
+                className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRestoreDefaults}
+                className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs"
+              >
+                Restaurar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODALS */}
       <ViewQuestionsModal

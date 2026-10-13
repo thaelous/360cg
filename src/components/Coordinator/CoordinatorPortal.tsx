@@ -12,17 +12,15 @@ import {
   Trash2,
   ExternalLink,
   Search,
-  Filter,
   AlertCircle,
   HelpCircle,
   FileSpreadsheet,
-  Download,
   RefreshCw,
   Copy,
   Check,
   FileDown,
-  FileText,
   Loader2,
+  GraduationCap,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats } from '../../types';
 import {
@@ -38,7 +36,6 @@ import {
 } from '../../services/dataService';
 import { ShareQrModal } from '../ShareQrModal';
 import { SubjectReportModal } from '../Reports/SubjectReportModal';
-import { ExportCsvModal } from '../Admin/ExportCsvModal';
 import { exportMasterExcelReport } from '../../utils/exportMasterExcel';
 import { BulkUploadModal } from './BulkUploadModal';
 import { getCampaignValidityInfo } from '../../utils/campaignValidity';
@@ -46,12 +43,21 @@ import { downloadElementAsPdf } from '../../utils/pdfGenerator';
 import { IndividualReportPdfTemplate } from '../Reports/IndividualReportPdfTemplate';
 import { GeneralReportPdfTemplate } from '../Reports/GeneralReportPdfTemplate';
 import { CoordinatorAnalyticsDashboard } from './CoordinatorAnalyticsDashboard';
+import { CompanyOnboardingTour, COMPANY_TOUR_STORAGE_KEY } from '../Onboarding/CompanyOnboardingTour';
+import { HelpInspectorModal } from '../Onboarding/HelpInspectorModal';
+import { HELP_CATALOG, HelpItem } from '../Onboarding/helpCatalog';
 
 interface CoordinatorPortalProps {
   initialCode?: string;
   initialCampaign?: Campaign | null;
   onLogout?: () => void;
   onLaunchEvaluation: (code: string, subjectId?: string) => void;
+  isTutorialOpenExternal?: boolean;
+  onCloseTutorialExternal?: () => void;
+  onOpenTutorialExternal?: () => void;
+  isHelpModeActiveExternal?: boolean;
+  onToggleHelpModeExternal?: () => void;
+  onSetHelpModeActiveExternal?: (active: boolean) => void;
 }
 
 export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
@@ -59,6 +65,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   initialCampaign = null,
   onLogout,
   onLaunchEvaluation,
+  isTutorialOpenExternal,
+  onCloseTutorialExternal,
+  onOpenTutorialExternal,
+  isHelpModeActiveExternal,
+  onToggleHelpModeExternal,
+  onSetHelpModeActiveExternal,
 }) => {
   const [clientCode, setClientCode] = useState(initialCode || initialCampaign?.clientCode || '');
   const [campaign, setCampaign] = useState<Campaign | null>(initialCampaign);
@@ -75,15 +87,96 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const [reportSubjectStats, setReportSubjectStats] = useState<SubjectStats | null>(null);
   const [reportSubjectResponses, setReportSubjectResponses] = useState<EvaluationResponse[]>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingIndividualPdf, setIsExportingIndividualPdf] = useState<string | null>(null);
   const [isExportingGeneralPdf, setIsExportingGeneralPdf] = useState(false);
   const [pdfGeneratingSubject, setPdfGeneratingSubject] = useState<EvaluatedSubject | null>(null);
   const [excelSuccessMsg, setExcelSuccessMsg] = useState('');
   const [bulkSuccessMsg, setBulkSuccessMsg] = useState('');
+  const [coordinatorErrorMsg, setCoordinatorErrorMsg] = useState('');
+  const [subjectToDelete, setSubjectToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingSubject, setIsDeletingSubject] = useState(false);
   const [isLinkCopied, setIsLinkCopied] = useState(false);
   const [isCodeCopied, setIsCodeCopied] = useState(false);
+
+  // Onboarding & Help Inspector Mode state
+  const [internalTutorialOpen, setInternalTutorialOpen] = useState(false);
+  const [internalHelpModeActive, setInternalHelpModeActive] = useState(false);
+  const [inspectedHelpItem, setInspectedHelpItem] = useState<HelpItem | null>(null);
+
+  const isTutorialOpen = isTutorialOpenExternal !== undefined ? isTutorialOpenExternal : internalTutorialOpen;
+  const isHelpModeActive = isHelpModeActiveExternal !== undefined ? isHelpModeActiveExternal : internalHelpModeActive;
+
+  const handleOpenTutorial = () => {
+    if (onOpenTutorialExternal) {
+      onOpenTutorialExternal();
+    } else {
+      setInternalTutorialOpen(true);
+    }
+  };
+
+  const handleCloseTutorial = () => {
+    if (onCloseTutorialExternal) {
+      onCloseTutorialExternal();
+    } else {
+      setInternalTutorialOpen(false);
+    }
+  };
+
+  const handleToggleHelpMode = () => {
+    if (onToggleHelpModeExternal) {
+      onToggleHelpModeExternal();
+    } else {
+      setInternalHelpModeActive((prev) => !prev);
+    }
+  };
+
+  const handleSetHelpModeActive = (val: boolean) => {
+    if (onSetHelpModeActiveExternal) {
+      onSetHelpModeActiveExternal(val);
+    } else {
+      setInternalHelpModeActive(val);
+    }
+  };
+
+  // Auto-activación del tutorial en la primera visita (persistencia en localStorage)
+  useEffect(() => {
+    if (campaign?.clientCode || campaign?.id) {
+      const hasSeen = localStorage.getItem(COMPANY_TOUR_STORAGE_KEY);
+      if (!hasSeen) {
+        handleOpenTutorial();
+      }
+    }
+  }, [campaign?.clientCode, campaign?.id]);
+
+  // Tecla Esc para salir del modo ayuda o cerrar popover de ayuda
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (inspectedHelpItem) {
+          setInspectedHelpItem(null);
+        } else if (isHelpModeActive) {
+          handleSetHelpModeActive(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isHelpModeActive, inspectedHelpItem]);
+
+  // Manejador en fase de captura para interceptar clics sobre elementos inspeccionables
+  const handleContainerClickCapture = (e: React.MouseEvent) => {
+    if (!isHelpModeActive) return;
+    const target = (e.target as HTMLElement).closest('[data-help-id]');
+    if (target) {
+      e.preventDefault();
+      e.stopPropagation();
+      const helpId = target.getAttribute('data-help-id');
+      if (helpId && HELP_CATALOG[helpId]) {
+        setInspectedHelpItem(HELP_CATALOG[helpId]);
+      }
+    }
+  };
 
   // New subject form
   const [newSubject, setNewSubject] = useState({
@@ -212,18 +305,27 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
       });
     } catch (err) {
       console.error(err);
-      alert('Error al registrar colaborador');
+      setCoordinatorErrorMsg('No se pudo registrar al colaborador en la base de datos. Verifica tu conexión.');
     }
   };
 
-  const handleDeleteSubject = async (subjectId: string, name: string) => {
-    if (!confirm(`¿Estás seguro de eliminar a ${name} de esta campaña?`)) return;
+  const handleRequestDeleteSubject = (subjectId: string, name: string) => {
+    setSubjectToDelete({ id: subjectId, name });
+  };
+
+  const handleConfirmDeleteSubject = async () => {
+    if (!subjectToDelete) return;
+    setIsDeletingSubject(true);
     try {
-      await deleteSubject(subjectId);
-      setSubjects((prev) => prev.filter((s) => s.id !== subjectId));
+      await deleteSubject(subjectToDelete.id);
+      setSubjects((prev) => prev.filter((s) => s.id !== subjectToDelete.id));
+      setExcelSuccessMsg(`Colaborador "${subjectToDelete.name}" eliminado de la campaña.`);
+      setSubjectToDelete(null);
     } catch (err) {
       console.error(err);
-      alert('Error al eliminar colaborador');
+      setCoordinatorErrorMsg('Error al eliminar el colaborador. Por favor reintenta.');
+    } finally {
+      setIsDeletingSubject(false);
     }
   };
 
@@ -238,7 +340,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const handleDownloadIndividualPdf = async (sub: EvaluatedSubject) => {
     const subResponses = responses.filter((r) => r.subjectId === sub.id);
     if (subResponses.length === 0) {
-      alert('Aún no se han recibido evaluaciones para este colaborador.');
+      setCoordinatorErrorMsg(`Aún no se han recibido evaluaciones para ${sub.name}. Se requiere al menos una respuesta para generar su reporte individual.`);
       return;
     }
     if (!campaign) return;
@@ -259,9 +361,9 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
       await downloadElementAsPdf(el, { filename });
       setExcelSuccessMsg(`Reporte PDF de ${sub.name} generado y descargado exitosamente.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generando PDF individual:', err);
-      alert('Hubo un problema al generar el archivo PDF. Intenta nuevamente.');
+      setCoordinatorErrorMsg(err?.message || 'Hubo un problema al generar el archivo PDF. Intenta nuevamente.');
     } finally {
       setIsExportingIndividualPdf(null);
       setPdfGeneratingSubject(null);
@@ -271,7 +373,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const handleDownloadGeneralPdf = async () => {
     if (!campaign) return;
     if (responses.length === 0) {
-      alert('Aún no se han recibido evaluaciones para generar el reporte general de la empresa.');
+      setCoordinatorErrorMsg('Aún no se han recibido evaluaciones en esta campaña para generar el Reporte General.');
       return;
     }
 
@@ -290,9 +392,9 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
 
       await downloadElementAsPdf(el, { filename, marginMm: 0 });
       setExcelSuccessMsg(`Reporte Ejecutivo General de ${campaign.companyName} generado y descargado exitosamente.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generando PDF general:', err);
-      alert('Hubo un problema al generar el Reporte General en PDF. Intenta nuevamente.');
+      setCoordinatorErrorMsg(err?.message || 'Hubo un problema al generar el Reporte General en PDF. Intenta nuevamente.');
     } finally {
       setIsExportingGeneralPdf(false);
     }
@@ -305,11 +407,11 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   const handleDownloadMasterExcel = async () => {
     if (!campaign) return;
     if (subjects.length === 0) {
-      alert('No hay colaboradores registrados en esta campaña para generar el reporte maestro.');
+      setCoordinatorErrorMsg('No hay colaboradores registrados en esta campaña para generar el reporte maestro.');
       return;
     }
     if (responses.length === 0) {
-      alert('Aún no se han recibido evaluaciones para esta campaña. Las evaluaciones registradas se consolidarán aquí automáticamente.');
+      setCoordinatorErrorMsg('Aún no se han recibido evaluaciones para esta campaña. Las evaluaciones registradas se consolidarán aquí automáticamente.');
       return;
     }
 
@@ -332,7 +434,7 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
       }, 7000);
     } catch (err: any) {
       console.error('Error al generar Excel maestro:', err);
-      alert('Ocurrió un error al generar el archivo Excel consolidado: ' + (err?.message || err));
+      setCoordinatorErrorMsg('Ocurrió un error al generar el archivo Excel consolidado: ' + (err?.message || err));
     } finally {
       setIsExportingExcel(false);
     }
@@ -530,7 +632,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
   );
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4 space-y-6 print:py-0 print:px-0 print:max-w-none">
+    <div
+      className={`max-w-6xl mx-auto py-8 px-4 space-y-6 print:py-0 print:px-0 print:max-w-none ${
+        isHelpModeActive ? 'cursor-help' : ''
+      }`}
+      onClickCapture={handleContainerClickCapture}
+    >
       {/* Barra de progreso superior en verde lima para respuesta inmediata */}
       {loading && (
         <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden -mt-2">
@@ -541,7 +648,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
       {/* Screen-Only Coordinator Dashboard */}
       <div className="space-y-6 print:hidden">
         {/* 1. HERO DE CAMPAÑA: Cabecera Ejecutiva y Barra de Acciones */}
-        <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm">
+        <div
+          data-help-id="header-campaign-info"
+          className={`bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm transition-all ${
+            isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+          }`}
+        >
           {/* Estructura del Encabezado */}
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
             {/* Arriba a la izquierda: Nombre de la empresa y descripción debajo en tono gris tenue */}
@@ -609,12 +721,15 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           {/* Barra de Acciones Organizada (Button Bar) */}
           <div className="pt-4 mt-5 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
             {/* Bloque de Gestión de Colaboradores (Izquierda) */}
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div id="tour-collab-management" className="flex flex-wrap items-center gap-2.5">
               {/* Botón Primario: + Registrar Colaborador */}
               <button
                 type="button"
+                data-help-id="btn-register-collaborator"
                 onClick={() => setIsAddModalOpen(true)}
-                className="bg-slate-900 hover:bg-black text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition"
+                className={`bg-slate-900 hover:bg-black text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer transition ${
+                  isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+                }`}
               >
                 <UserPlus className="w-4 h-4" />
                 <span>+ Registrar Colaborador</span>
@@ -623,8 +738,11 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               {/* Botón Secundario: Carga Masiva Excel */}
               <button
                 type="button"
+                data-help-id="btn-bulk-upload"
                 onClick={() => setIsBulkUploadModalOpen(true)}
-                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
+                className={`bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs ${
+                  isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+                }`}
                 title="Importar múltiples colaboradores mediante archivo Excel (.xlsx)"
               >
                 <FileSpreadsheet className="w-4 h-4 text-slate-600" />
@@ -634,8 +752,11 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               {/* Botón Auxiliar: Código QR */}
               <button
                 type="button"
+                data-help-id="btn-qr-share"
                 onClick={() => handleOpenShare()}
-                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium px-3.5 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs"
+                className={`bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium px-3.5 py-2 rounded-xl text-sm flex items-center gap-2 cursor-pointer transition shadow-xs ${
+                  isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+                }`}
                 title="Ver código QR de acceso a la campaña"
               >
                 <QrCode className="w-4 h-4 text-slate-600" />
@@ -643,14 +764,46 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               </button>
             </div>
 
+            {/* Bloque Central / Asistencia Guiada y Ayuda */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Botón Permanente: Ver Tutorial */}
+              <button
+                type="button"
+                onClick={handleOpenTutorial}
+                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold px-3 py-2 rounded-xl text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+                title="Abrir recorrido guiado interactivo de bienvenida"
+              >
+                <GraduationCap className="w-4 h-4 text-indigo-600" />
+                <span>Ver Tutorial</span>
+              </button>
+
+              {/* Botón: ¿Qué es esto? (Modo Ayuda al Clic) */}
+              <button
+                type="button"
+                onClick={handleToggleHelpMode}
+                className={`font-bold px-3 py-2 rounded-xl text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition shadow-2xs ${
+                  isHelpModeActive
+                    ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-400 shadow-sm animate-pulse'
+                    : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+                }`}
+                title="Activar modo ayuda al clic (haz clic en cualquier botón o tarjeta para ver su función)"
+              >
+                <HelpCircle className={`w-4 h-4 ${isHelpModeActive ? 'text-slate-950' : 'text-amber-700'}`} />
+                <span>{isHelpModeActive ? 'Modo Ayuda: ACTIVO' : '¿Qué es esto?'}</span>
+              </button>
+            </div>
+
             {/* Bloque de Reportes e Informes (Derecha) */}
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div id="tour-reports-download" className="flex flex-wrap items-center gap-2.5">
               {/* Botón Reporte Ejecutivo (PDF) */}
               <button
                 type="button"
+                data-help-id="btn-pdf-report"
                 onClick={handleDownloadGeneralPdf}
                 disabled={isExportingGeneralPdf || responses.length === 0}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer disabled:cursor-not-allowed transition"
+                className={`bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-sm cursor-pointer disabled:cursor-not-allowed transition ${
+                  isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+                }`}
                 title={
                   responses.length > 0
                     ? `Descargar Reporte Ejecutivo en PDF (${campaign.companyName})`
@@ -673,9 +826,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
               {/* Botón Exportar Datos (.xlsx) */}
               <button
                 type="button"
+                data-help-id="btn-excel-report"
                 onClick={handleDownloadMasterExcel}
                 disabled={isExportingExcel || responses.length === 0}
-                className="bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed transition"
+                className={`bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed transition ${
+                  isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+                }`}
                 title={
                   responses.length > 0
                     ? `Exportar datos consolidados en Excel (${responses.length} evaluaciones)`
@@ -745,10 +901,36 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </div>
         )}
 
+        {/* Notificación inline de error o validación */}
+        {coordinatorErrorMsg && (
+          <div className="p-4 bg-rose-50 border border-rose-300 rounded-2xl flex items-center justify-between gap-3 text-rose-950 text-xs shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-rose-200 rounded-lg text-rose-800">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <div>
+                <strong className="block font-bold">Aviso del Sistema</strong>
+                <span className="text-slate-700">{coordinatorErrorMsg}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setCoordinatorErrorMsg('')}
+              className="px-2.5 py-1 text-rose-800 hover:bg-rose-200/60 rounded-lg font-bold cursor-pointer"
+            >
+              Cerrar
+            </button>
+          </div>
+        )}
+
         {/* 3. TARJETAS KPI DE MÉTRICAS CLAVE (Estilo Dashboard Ejecutivo) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div id="tour-metrics" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* KPI 1: Colaboradores Evaluados */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+          <div
+            data-help-id="kpi-subjects"
+            className={`bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between transition-all ${
+              isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+            }`}
+          >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 font-medium">Colaboradores Evaluados</span>
@@ -767,7 +949,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </div>
 
           {/* KPI 2: Evaluaciones Completadas */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+          <div
+            data-help-id="kpi-completed"
+            className={`bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between transition-all ${
+              isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+            }`}
+          >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 font-medium">Evaluaciones Completadas</span>
@@ -786,7 +973,12 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </div>
 
           {/* KPI 3: Tasa de Participación (%) */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+          <div
+            data-help-id="kpi-participation"
+            className={`bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between transition-all ${
+              isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+            }`}
+          >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 font-medium">Tasa de Participación</span>
@@ -810,7 +1002,13 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           </div>
 
           {/* KPI 4: Enlace Directo de Difusión con Copiado Rápido */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+          <div
+            id="tour-qr-broadcast"
+            data-help-id="kpi-average"
+            className={`bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between transition-all ${
+              isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+            }`}
+          >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 font-medium">Enlace Directo de Difusión</span>
@@ -848,14 +1046,27 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
         </div>
 
         {/* 4. DASHBOARD VISUAL (RECHARTS): TENDENCIA DIARIA Y ESTADO GENERAL EN DONA */}
-        <CoordinatorAnalyticsDashboard
-          campaign={campaign}
-          subjects={subjects}
-          responses={responses}
-        />
+        <div
+          data-help-id="section-analytics"
+          className={`transition-all rounded-3xl ${
+            isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+          }`}
+        >
+          <CoordinatorAnalyticsDashboard
+            campaign={campaign}
+            subjects={subjects}
+            responses={responses}
+          />
+        </div>
 
         {/* 5. TABLA DE COLABORADORES (Diseño SaaS Corporativo Sin Saturación) */}
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+        <div
+          id="tour-evaluated-list"
+          data-help-id="table-collaborators"
+          className={`bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden transition-all ${
+            isHelpModeActive ? 'hover:ring-2 hover:ring-amber-400 hover:ring-offset-2' : ''
+          }`}
+        >
           {/* Table header bar */}
           <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -1043,9 +1254,9 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
 
-                      {/* Eliminar (papelera discreta) */}
+                      {/* Eliminar (papelera discreta con modal de confirmación seguro) */}
                       <button
-                        onClick={() => handleDeleteSubject(sub.id, sub.name)}
+                        onClick={() => handleRequestDeleteSubject(sub.id, sub.name)}
                         className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                         title="Eliminar colaborador"
                         aria-label="Eliminar"
@@ -1197,16 +1408,6 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
         />
       )}
 
-      {/* EXPORT CSV MODAL */}
-      {isExportModalOpen && campaign && (
-        <ExportCsvModal
-          isOpen={isExportModalOpen}
-          onClose={() => setIsExportModalOpen(false)}
-          campaign={campaign}
-          subjects={subjects}
-          responses={responses}
-        />
-      )}
 
       {/* BULK UPLOAD EXCEL MODAL */}
       {isBulkUploadModalOpen && campaign && (
@@ -1300,6 +1501,80 @@ export const CoordinatorPortal: React.FC<CoordinatorPortalProps> = ({
           />
         )}
       </div>
+
+      {/* Floating Banner when Help Mode is Active */}
+      {isHelpModeActive && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border-2 border-amber-400 flex items-center gap-4 max-w-xl w-[92vw] sm:w-auto justify-between animate-fade-in">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="flex h-3 w-3 relative shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+            </span>
+            <div className="min-w-0 text-left">
+              <strong className="text-xs font-black text-amber-300 block">Modo Ayuda Activo</strong>
+              <span className="text-[11px] text-slate-300 block truncate">
+                Haz clic en cualquier botón, tarjeta o indicador para conocer su función.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleSetHelpModeActive(false)}
+            className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black rounded-xl transition cursor-pointer shrink-0 shadow-xs"
+          >
+            Salir (Esc)
+          </button>
+        </div>
+      )}
+
+      {/* 1. Modal de Recorrido Guiado Interactivo de Bienvenida */}
+      {campaign && (
+        <CompanyOnboardingTour
+          isOpen={isTutorialOpen}
+          onClose={handleCloseTutorial}
+          campaign={campaign}
+        />
+      )}
+
+      {/* 2. Modal Inspector de Ayuda Interactiva al Clic */}
+      <HelpInspectorModal
+        item={inspectedHelpItem}
+        onClose={() => setInspectedHelpItem(null)}
+      />
+
+      {/* 3. Modal de Confirmación para Eliminar Colaborador */}
+      {subjectToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden p-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-900">¿Eliminar Colaborador?</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                ¿Estás seguro de remover a <strong className="text-slate-800">{subjectToDelete.name}</strong> de esta campaña?
+              </p>
+            </div>
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setSubjectToDelete(null)}
+                className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingSubject}
+                onClick={handleConfirmDeleteSubject}
+                className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-black rounded-xl transition cursor-pointer shadow-xs"
+              >
+                {isDeletingSubject ? 'Eliminando...' : 'Sí, Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -7,23 +7,15 @@ import {
   Check,
   QrCode,
   Users,
-  BarChart,
-  Calendar,
   Lock,
   Unlock,
   ExternalLink,
-  ChevronRight,
-  TrendingUp,
   FileText,
   Search,
   LogOut,
-  Database,
   Flame,
   BookOpen,
-  Sparkles,
-  Layers,
   FileSpreadsheet,
-  Clock,
   Hourglass,
 } from 'lucide-react';
 import { Campaign, EvaluatedSubject, EvaluationResponse, SubjectStats, SurveyTemplate } from '../../types';
@@ -42,7 +34,6 @@ import { ShareQrModal } from '../ShareQrModal';
 import { SubjectReportModal } from '../Reports/SubjectReportModal';
 import { ExportCsvModal } from './ExportCsvModal';
 import { TemplateLibrary } from '../Templates/TemplateLibrary';
-import { ViewQuestionsModal } from '../Templates/ViewQuestionsModal';
 
 interface AdminDashboardProps {
   onSwitchToCoordinator: (clientCode: string) => void;
@@ -75,9 +66,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     durationDays: 30,
   });
 
-  // Preview questionnaire modal
-  const [inspectingTemplate, setInspectingTemplate] = useState<SurveyTemplate | null>(null);
-
   // Share QR Modal
   const [selectedCampaignForShare, setSelectedCampaignForShare] = useState<Campaign | null>(null);
 
@@ -89,6 +77,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [activeReportResponses, setActiveReportResponses] = useState<EvaluationResponse[]>([]);
   const [activeReportCompany, setActiveReportCompany] = useState('');
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+  // Feedback state
+  const [adminNotice, setAdminNotice] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   // Copied code feedback
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -113,23 +105,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setSelectedTemplateId(tpls[0].id);
       }
 
-      // Fetch subjects & responses across all campaigns
+      // Fetch subjects & responses across all campaigns in parallel
       const allSubs: EvaluatedSubject[] = [];
       const allResps: EvaluationResponse[] = [];
 
-      for (const c of camps) {
-        const [subs, resps] = await Promise.all([
-          getSubjects(c.id),
-          getResponses(c.id),
-        ]);
+      const perCampaignPromises = camps.map(async (c) => {
+        try {
+          const [subs, resps] = await Promise.all([
+            getSubjects(c.id),
+            getResponses(c.id),
+          ]);
+          return { subs, resps };
+        } catch (err) {
+          console.warn(`Error loading data for campaign ${c.id}:`, err);
+          return { subs: [] as EvaluatedSubject[], resps: [] as EvaluationResponse[] };
+        }
+      });
+
+      const results = await Promise.all(perCampaignPromises);
+      results.forEach(({ subs, resps }) => {
         allSubs.push(...subs);
         allResps.push(...resps);
-      }
+      });
 
       setSubjects(allSubs);
       setResponses(allResps);
     } catch (err) {
       console.error('Error loading admin data', err);
+      setAdminNotice('Error al conectar con la base de datos de administración.');
     } finally {
       setLoading(false);
     }
@@ -138,9 +141,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCampaignData.companyName.trim()) {
-      alert('Ingresa el nombre de la empresa');
+      setModalError('Por favor ingresa el nombre de la empresa.');
       return;
     }
+    setModalError(null);
 
     try {
       const chosenTemplate = templates.find((t) => t.id === selectedTemplateId) || templates[0];
@@ -158,29 +162,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setCampaigns((prev) => [created, ...prev]);
       setIsCreateModalOpen(false);
       setNewCampaignData({ companyName: '', clientCode: '', description: '', durationDays: 30 });
+      setAdminNotice(`Campaña para "${created.companyName}" (${created.clientCode}) creada exitosamente.`);
+      setTimeout(() => setAdminNotice(null), 4000);
     } catch (err) {
       console.error(err);
-      alert('Error creando campaña');
+      setModalError('Error al crear la campaña en la base de datos. Verifica tu conexión.');
     }
   };
 
   const handleToggleStatus = async (campaign: Campaign) => {
     const nextStatus = campaign.status === 'active' ? 'closed' : 'active';
-    const confirmText =
-      nextStatus === 'closed'
-        ? `¿Deseas cerrar la campaña de "${campaign.companyName}"? Los evaluadores ya no podrán enviar más respuestas.`
-        : `¿Deseas reactivar la campaña de "${campaign.companyName}"?`;
-
-    if (!confirm(confirmText)) return;
-
     try {
       await updateCampaignStatus(campaign.id, nextStatus);
       setCampaigns((prev) =>
         prev.map((c) => (c.id === campaign.id ? { ...c, status: nextStatus } : c))
       );
+      setAdminNotice(
+        `Campaña de "${campaign.companyName}" ${
+          nextStatus === 'closed' ? 'cerrada (no aceptará más respuestas)' : 'reactivada exitosamente'
+        }.`
+      );
+      setTimeout(() => setAdminNotice(null), 4000);
     } catch (err) {
       console.error(err);
-      alert('Error al actualizar estado de la campaña');
+      setAdminNotice('Error al actualizar el estado de la campaña.');
+      setTimeout(() => setAdminNotice(null), 4000);
     }
   };
 
@@ -203,6 +209,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     c.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.clientCode.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const globalAverageScore = React.useMemo(() => {
+    if (responses.length === 0) return 0;
+    let sum = 0;
+    let count = 0;
+    responses.forEach((r) => {
+      if (r.scores) {
+        Object.values(r.scores).forEach((val) => {
+          if (typeof val === 'number') {
+            sum += val;
+            count++;
+          }
+        });
+      }
+    });
+    return count > 0 ? Number((sum / count).toFixed(2)) : 0;
+  }, [responses]);
 
   return (
     <div className="max-w-6xl mx-auto py-6 px-4 space-y-6">
@@ -268,13 +291,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <button
-          onClick={() => setIsCreateModalOpen(true)}
+          onClick={() => {
+            setModalError(null);
+            setIsCreateModalOpen(true);
+          }}
           className="px-5 py-3.5 bg-lime-500 hover:bg-lime-400 text-slate-900 font-black text-xs sm:text-sm rounded-2xl shadow-lg shadow-lime-500/20 transition flex items-center justify-center gap-2 shrink-0 self-start md:self-center border border-lime-400 cursor-pointer"
         >
           <PlusCircle className="w-4 h-4 stroke-[2.5]" />
           Nueva Campaña / Empresa
         </button>
       </div>
+
+      {/* Admin Feedback Notice */}
+      {adminNotice && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">{adminNotice}</span>
+          </div>
+          <button
+            onClick={() => setAdminNotice(null)}
+            className="px-2 py-0.5 text-emerald-800 hover:bg-emerald-100 rounded-lg font-bold"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {/* Admin Section Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
@@ -349,7 +391,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <span className="text-xs font-semibold text-slate-500 block">Promedio Global</span>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-3xl font-black text-slate-900">
-                  {responses.length > 0 ? '4.32' : '0.0'}
+                  {globalAverageScore > 0 ? globalAverageScore.toFixed(2) : '0.0'}
                 </span>
                 <span className="text-xs text-slate-400">/ 5.0</span>
               </div>

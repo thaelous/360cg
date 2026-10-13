@@ -42,6 +42,8 @@ import {
   withTimeout,
 } from '../../services/dataService';
 import { getCampaignValidityInfo } from '../../utils/campaignValidity';
+import { EvaluatorInstructionsModal } from '../Onboarding/EvaluatorInstructionsModal';
+import { EvaluatorOnboardingTour, EVALUATOR_TOUR_STORAGE_KEY } from '../Onboarding/EvaluatorOnboardingTour';
 
 interface EvaluatorPortalProps {
   initialCode?: string;
@@ -49,6 +51,9 @@ interface EvaluatorPortalProps {
   evaluatorSubjectId?: string;
   evaluatorCompanyId?: string;
   onNavigateHome?: () => void;
+  isTutorialOpenExternal?: boolean;
+  onCloseTutorialExternal?: () => void;
+  onOpenTutorialExternal?: () => void;
 }
 
 export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
@@ -57,6 +62,9 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   evaluatorSubjectId = '',
   evaluatorCompanyId = '',
   onNavigateHome,
+  isTutorialOpenExternal,
+  onCloseTutorialExternal,
+  onOpenTutorialExternal,
 }) => {
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const urlSubId = urlParams ? urlParams.get('evaluar') || urlParams.get('id') || urlParams.get('subject') || '' : '';
@@ -97,6 +105,39 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
   const [evaluatorRole, setEvaluatorRole] = useState<EvaluatorRole>('peer');
   const [evaluatorName, setEvaluatorName] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(true);
+
+  // Instructions modal state
+  const [isInstructionsModalOpen, setIsInstructionsModalOpen] = useState(false);
+
+  // Interactive Onboarding Tour state & auto-open on first visit
+  const [internalTutorialOpen, setInternalTutorialOpen] = useState(false);
+  const isTutorialOpen = isTutorialOpenExternal !== undefined ? isTutorialOpenExternal : internalTutorialOpen;
+
+  const handleOpenTutorial = () => {
+    if (onOpenTutorialExternal) {
+      onOpenTutorialExternal();
+    } else {
+      setInternalTutorialOpen(true);
+    }
+  };
+
+  const handleCloseTutorial = () => {
+    if (onCloseTutorialExternal) {
+      onCloseTutorialExternal();
+    } else {
+      setInternalTutorialOpen(false);
+    }
+  };
+
+  // Auto-activación del tutorial guiado en la primera visita (eval360_tour_evaluator_viewed_v1)
+  useEffect(() => {
+    if (step === 'select_subject_role' || step === 'questionnaire') {
+      const hasSeen = localStorage.getItem(EVALUATOR_TOUR_STORAGE_KEY);
+      if (!hasSeen) {
+        handleOpenTutorial();
+      }
+    }
+  }, [step]);
 
   // Questionnaire state
   const [currentCompetencyIndex, setCurrentCompetencyIndex] = useState(0);
@@ -677,12 +718,32 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={() => setStep('code_entry')}
-            className="text-xs text-slate-500 hover:text-slate-900 font-semibold self-start sm:self-center px-3 py-1.5 rounded-xl hover:bg-slate-100 transition"
-          >
-            Cambiar código
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-center flex-wrap">
+            <button
+              type="button"
+              onClick={handleOpenTutorial}
+              className="text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs border border-slate-200"
+              title="Abrir recorrido guiado interactivo paso a paso"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+              <span>¿Cómo funciona? (Ver Tutorial)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsInstructionsModalOpen(true)}
+              className="text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs border border-slate-200"
+              title="Consultar reglas e instrucciones del cuestionario"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
+              <span>? Instrucciones</span>
+            </button>
+            <button
+              onClick={() => setStep('code_entry')}
+              className="text-xs text-slate-500 hover:text-slate-900 font-semibold px-2.5 py-1.5 rounded-xl hover:bg-slate-100 transition"
+            >
+              Cambiar código
+            </button>
+          </div>
         </div>
 
         {errorMsg && (
@@ -692,8 +753,11 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
           </div>
         )}
 
-        {/* Selection Card */}
-        <div className="bg-white rounded-3xl p-5 sm:p-8 border border-slate-200/90 shadow-sm space-y-6">
+        {/* Selection Card (Enfocado en Paso 2 del Tour: Colaborador & Rol) */}
+        <div
+          id="tour-evaluator-target"
+          className="bg-white rounded-3xl p-5 sm:p-8 border border-slate-200/90 shadow-sm space-y-6"
+        >
           {/* PASO 1: EVALUATED SUBJECT */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -878,6 +942,21 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
             <ArrowRight className="w-4 h-4 stroke-[3]" />
           </button>
         </div>
+
+        {/* Modal Mini Tutorial de Arranque */}
+        <EvaluatorInstructionsModal
+          isOpen={isInstructionsModalOpen}
+          onClose={() => setIsInstructionsModalOpen(false)}
+          collaboratorName={selectedSubject?.name}
+          companyName={campaign?.companyName}
+        />
+
+        {/* Recorrido Guiado Interactivo (Onboarding Spotlight Tour) */}
+        <EvaluatorOnboardingTour
+          isOpen={isTutorialOpen}
+          onClose={handleCloseTutorial}
+          collaboratorName={selectedSubject?.name}
+        />
       </div>
     );
   }
@@ -893,8 +972,11 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
 
     return (
       <div className="w-full max-w-3xl mx-auto px-4 py-6 sm:px-6 sm:py-10 space-y-6">
-        {/* Top Evaluation Context Bar */}
-        <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Top Evaluation Context Bar (Enfocado en Paso 4: Avance y Envío) */}
+        <div
+          id="tour-evaluator-progress"
+          className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200/90 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-slate-900 text-lime-400 font-black text-base flex items-center justify-center shadow-xs shrink-0">
               {selectedSubject?.name.charAt(0)}
@@ -917,7 +999,25 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
 
           {/* Stepper info with Pregunta X de 20 & % de avance */}
           <div className="text-left sm:text-right pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-            <div className="flex items-center sm:justify-end gap-2">
+            <div className="flex items-center sm:justify-end gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleOpenTutorial}
+                className="text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs border border-slate-200"
+                title="Abrir recorrido guiado interactivo paso a paso"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="hidden sm:inline">¿Cómo funciona? (Ver Tutorial)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsInstructionsModalOpen(true)}
+                className="text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs border border-slate-200"
+                title="Consultar reglas e instrucciones del cuestionario (escala 1 a 5 y confidencialidad)"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
+                <span>? Instrucciones</span>
+              </button>
               <span className="text-xs sm:text-sm font-black text-slate-900">
                 Pregunta {answeredCount} de {totalQuestions}
               </span>
@@ -967,6 +1067,7 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
               return (
                 <div
                   key={question.id}
+                  id={qIdx === 0 ? 'tour-evaluator-scale' : undefined}
                   className="p-4 sm:p-5 rounded-2xl bg-slate-50/70 border border-slate-200/90 space-y-3.5 transition-colors"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1057,6 +1158,21 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Modal Mini Tutorial de Arranque accesible durante el cuestionario */}
+        <EvaluatorInstructionsModal
+          isOpen={isInstructionsModalOpen}
+          onClose={() => setIsInstructionsModalOpen(false)}
+          collaboratorName={selectedSubject?.name}
+          companyName={campaign?.companyName}
+        />
+
+        {/* Recorrido Guiado Interactivo (Onboarding Spotlight Tour) */}
+        <EvaluatorOnboardingTour
+          isOpen={isTutorialOpen}
+          onClose={handleCloseTutorial}
+          collaboratorName={selectedSubject?.name}
+        />
       </div>
     );
   }
@@ -1066,16 +1182,27 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
     return (
       <div className="w-full max-w-3xl mx-auto px-4 py-6 sm:px-6 sm:py-10 space-y-6">
         <div className="bg-white rounded-3xl p-5 sm:p-8 border border-slate-200/90 shadow-sm space-y-6">
-          <div className="border-b border-slate-100 pb-4">
-            <span className="inline-block px-3 py-1 bg-lime-100 text-slate-900 border border-lime-300 rounded-full text-xs font-black uppercase tracking-wider mb-2">
-              Paso Final • Retroalimentación Cualitativa
-            </span>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900">
-              Comentarios Abiertos y Feedback Constructivo
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-600 mt-1">
-              Las opiniones sinceras inspiran tanto como las métricas numéricas. Comparte tu perspectiva para impulsar el desarrollo de <strong>{selectedSubject?.name}</strong>.
-            </p>
+          <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div>
+              <span className="inline-block px-3 py-1 bg-lime-100 text-slate-900 border border-lime-300 rounded-full text-xs font-black uppercase tracking-wider mb-2">
+                Paso Final • Retroalimentación Cualitativa
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900">
+                Comentarios Abiertos y Feedback Constructivo
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600 mt-1">
+                Las opiniones sinceras inspiran tanto como las métricas numéricas. Comparte tu perspectiva para impulsar el desarrollo de <strong>{selectedSubject?.name}</strong>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsInstructionsModalOpen(true)}
+              className="text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs border border-slate-200 shrink-0 self-start sm:self-center"
+              title="Consultar reglas e instrucciones del cuestionario"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+              <span>? Instrucciones</span>
+            </button>
           </div>
 
           {errorMsg && (
@@ -1168,6 +1295,21 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Modal Mini Tutorial de Arranque accesible en comentarios */}
+        <EvaluatorInstructionsModal
+          isOpen={isInstructionsModalOpen}
+          onClose={() => setIsInstructionsModalOpen(false)}
+          collaboratorName={selectedSubject?.name}
+          companyName={campaign?.companyName}
+        />
+
+        {/* Recorrido Guiado Interactivo (Onboarding Spotlight Tour) */}
+        <EvaluatorOnboardingTour
+          isOpen={isTutorialOpen}
+          onClose={handleCloseTutorial}
+          collaboratorName={selectedSubject?.name}
+        />
       </div>
     );
   }
@@ -1241,6 +1383,13 @@ export const EvaluatorPortal: React.FC<EvaluatorPortalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Recorrido Guiado Interactivo (Onboarding Spotlight Tour) */}
+      <EvaluatorOnboardingTour
+        isOpen={isTutorialOpen}
+        onClose={handleCloseTutorial}
+        collaboratorName={selectedSubject?.name}
+      />
     </div>
   );
 };

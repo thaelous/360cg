@@ -26,8 +26,15 @@ export function loadHtml2Pdf(): Promise<any> {
     // Check if already in DOM
     const existing = document.querySelector('script[data-lib="html2pdf"]');
     if (existing) {
+      if (window.html2pdf) {
+        resolve(window.html2pdf);
+        return;
+      }
       existing.addEventListener('load', () => resolve(window.html2pdf));
-      existing.addEventListener('error', () => reject(new Error('Failed to load html2pdf.js')));
+      existing.addEventListener('error', () => {
+        html2pdfPromise = null;
+        reject(new Error('Error al cargar html2pdf.js desde la caché del navegador'));
+      });
       return;
     }
 
@@ -36,15 +43,24 @@ export function loadHtml2Pdf(): Promise<any> {
     script.async = true;
     script.setAttribute('data-lib', 'html2pdf');
 
+    const timeout = setTimeout(() => {
+      html2pdfPromise = null;
+      script.remove();
+      reject(new Error('Tiempo de espera agotado al descargar la librería de PDF. Verifica tu conexión a Internet.'));
+    }, 10000);
+
     script.onload = () => {
+      clearTimeout(timeout);
       if (window.html2pdf) {
         resolve(window.html2pdf);
       } else {
-        reject(new Error('html2pdf was loaded but window.html2pdf is undefined'));
+        html2pdfPromise = null;
+        reject(new Error('html2pdf se descargó pero no se inicializó correctamente en el navegador'));
       }
     };
 
     script.onerror = () => {
+      clearTimeout(timeout);
       html2pdfPromise = null;
       reject(new Error('No se pudo cargar la librería html2pdf.js desde el CDN'));
     };

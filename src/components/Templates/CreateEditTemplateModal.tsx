@@ -27,7 +27,10 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   useEffect(() => {
+    setErrorMsg(null);
     if (templateToEdit) {
       setName(templateToEdit.name);
       setTargetIndustry(templateToEdit.targetIndustry);
@@ -51,6 +54,7 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
   if (!isOpen) return null;
 
   const handleAddQuestion = () => {
+    setErrorMsg(null);
     const lastCategory = questions.length > 0 ? questions[questions.length - 1].category : 'General';
     setQuestions([
       ...questions,
@@ -64,9 +68,10 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
 
   const handleRemoveQuestion = (idx: number) => {
     if (questions.length <= 1) {
-      alert('Una plantilla debe tener al menos una pregunta.');
+      setErrorMsg('Una plantilla debe tener al menos una pregunta.');
       return;
     }
+    setErrorMsg(null);
     setQuestions(questions.filter((_, i) => i !== idx));
   };
 
@@ -77,6 +82,7 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
   };
 
   const handleAutocompleteTo20 = () => {
+    setErrorMsg(null);
     const valid = questions.filter((q) => q.text.trim().length > 0);
     const { questions: std } = standardizeAndMigrateQuestions(valid);
     setQuestions(std);
@@ -85,16 +91,17 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      alert('Por favor ingresa un nombre para la plantilla.');
+      setErrorMsg('Por favor ingresa un nombre para la plantilla.');
       return;
     }
 
     const validQuestions = questions.filter((q) => q.text.trim().length > 0);
     if (validQuestions.length === 0) {
-      alert('Por favor completa al menos una pregunta con su enunciado.');
+      setErrorMsg('Por favor completa al menos una pregunta con su enunciado.');
       return;
     }
 
+    setErrorMsg(null);
     // Always enforce the strict 20 questions standard
     const { questions: final20Questions } = standardizeAndMigrateQuestions(validQuestions);
 
@@ -127,7 +134,7 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
       onClose();
     } catch (err: any) {
       console.error(err);
-      alert('Error guardando plantilla: ' + (err?.message || err));
+      setErrorMsg('Error guardando plantilla: ' + (err?.message || err));
     } finally {
       setLoading(false);
     }
@@ -164,6 +171,22 @@ export const CreateEditTemplateModal: React.FC<CreateEditTemplateModalProps> = (
 
         {/* Content Form */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-5">
+          {errorMsg && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center justify-between gap-2 shadow-xs">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorMsg(null)}
+                className="text-rose-600 hover:text-rose-800 font-bold text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">

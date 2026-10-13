@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { X, Upload, FileSpreadsheet, Download, CheckCircle, AlertCircle, ArrowRight, Layers, Sparkles, RefreshCw } from 'lucide-react';
+import { X, Upload, FileSpreadsheet, Download, CheckCircle, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
 import { parseSurveyTemplateCsv, downloadSampleTemplateCsv } from '../../utils/templateCsv';
 import { createSurveyTemplate } from '../../services/dataService';
 import { SurveyTemplate, TemplateQuestion } from '../../types';
@@ -63,11 +63,11 @@ export const ImportTemplateCsvModal: React.FC<ImportTemplateCsvModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      alert('Ingresa el nombre de la plantilla.');
+      setParseError('Por favor ingresa el nombre de la plantilla.');
       return;
     }
     if (parsedQuestions.length === 0) {
-      alert('Debes cargar un archivo CSV con preguntas válidas.');
+      setParseError('Debes cargar un archivo CSV con preguntas válidas.');
       return;
     }
 
@@ -78,7 +78,7 @@ export const ImportTemplateCsvModal: React.FC<ImportTemplateCsvModalProps> = ({
         : standardizedQuestions;
 
     if (questionsToSave.length !== REQUIRED_QUESTIONS_PER_TEMPLATE) {
-      alert(`La plantilla debe contener exactamente ${REQUIRED_QUESTIONS_PER_TEMPLATE} preguntas.`);
+      setParseError(`La plantilla debe contener exactamente ${REQUIRED_QUESTIONS_PER_TEMPLATE} preguntas.`);
       return;
     }
 
@@ -98,7 +98,7 @@ export const ImportTemplateCsvModal: React.FC<ImportTemplateCsvModalProps> = ({
       onClose();
     } catch (err: any) {
       console.error(err);
-      alert('Error al guardar la plantilla en Firestore: ' + (err?.message || err));
+      setParseError('Error al guardar la plantilla en Firestore: ' + (err?.message || err));
     } finally {
       setLoading(false);
     }

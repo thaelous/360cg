@@ -4,8 +4,9 @@ import {
   Lock,
   ShieldCheck,
   LogOut,
-  Flame,
   UserCheck,
+  GraduationCap,
+  HelpCircle,
 } from 'lucide-react';
 import { Campaign } from '../types';
 import { AdminUser } from '../services/authService';
@@ -19,6 +20,9 @@ interface NavbarProps {
   onOpenAdminPanel: () => void;
   onLogoutAdmin: () => void;
   onLogoutCompany: () => void;
+  onOpenTutorial?: () => void;
+  onToggleHelpMode?: () => void;
+  isHelpModeActive?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +34,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAdminPanel,
   onLogoutAdmin,
   onLogoutCompany,
+  onOpenTutorial,
+  onToggleHelpMode,
+  isHelpModeActive = false,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs print:hidden">
@@ -91,6 +98,36 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
 
+              {/* Botón ¿Cómo funciona? (Ver Tutorial) permanente */}
+              {onOpenTutorial && (
+                <button
+                  type="button"
+                  onClick={onOpenTutorial}
+                  className="px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Abrir recorrido guiado interactivo paso a paso"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden sm:inline">¿Cómo funciona? (Ver Tutorial)</span>
+                </button>
+              )}
+
+              {/* Botón ¿Qué es esto? (Modo Ayuda al Clic) */}
+              {onToggleHelpMode && (
+                <button
+                  type="button"
+                  onClick={onToggleHelpMode}
+                  className={`px-2.5 py-1.5 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                    isHelpModeActive
+                      ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300 shadow-sm animate-pulse'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title="Activar modo inspector de ayuda interactiva (haz clic en cualquier elemento para conocer su función)"
+                >
+                  <HelpCircle className={`w-3.5 h-3.5 ${isHelpModeActive ? 'text-slate-950' : 'text-amber-600'}`} />
+                  <span className="hidden sm:inline">¿Qué es esto?</span>
+                </button>
+              )}
+
               <button
                 onClick={onLogoutCompany}
                 className="text-slate-500 hover:text-slate-800 text-xs sm:text-sm font-medium px-2.5 py-1.5 rounded-xl hover:bg-slate-100 transition flex items-center gap-1.5 cursor-pointer"
@@ -102,14 +139,27 @@ export const Navbar: React.FC<NavbarProps> = ({
             </>
           )}
 
-          {/* If Evaluator is active, show back to home button */}
+          {/* If Evaluator is active, show tutorial button and back to home button */}
           {currentView === 'evaluator' && (
-            <button
-              onClick={onNavigateHome}
-              className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition font-medium"
-            >
-              Portal Principal
-            </button>
+            <div className="flex items-center gap-2">
+              {onOpenTutorial && (
+                <button
+                  type="button"
+                  onClick={onOpenTutorial}
+                  className="px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Abrir recorrido guiado interactivo paso a paso"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden sm:inline">¿Cómo funciona? (Ver Tutorial)</span>
+                </button>
+              )}
+              <button
+                onClick={onNavigateHome}
+                className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition font-medium"
+              >
+                Portal Principal
+              </button>
+            </div>
           )}
 
           {/* If Admin is logged in */}

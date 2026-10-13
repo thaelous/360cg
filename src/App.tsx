@@ -58,6 +58,11 @@ export default function App() {
   const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Onboarding & Help Inspector state for Coordinator Portal & Evaluator View
+  const [isCompanyTutorialOpen, setIsCompanyTutorialOpen] = useState(false);
+  const [isEvaluatorTutorialOpen, setIsEvaluatorTutorialOpen] = useState(false);
+  const [isHelpModeActive, setIsHelpModeActive] = useState(false);
+
   // Efecto robusto de arranque para enrutamiento directo (QR, enlaces de empresa o admin)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -242,6 +247,15 @@ export default function App() {
         onOpenAdminPanel={() => setCurrentView('admin')}
         onLogoutAdmin={handleLogoutAdmin}
         onLogoutCompany={handleLogoutCompany}
+        onOpenTutorial={() => {
+          if (currentView === 'coordinator') {
+            setIsCompanyTutorialOpen(true);
+          } else if (currentView === 'evaluator') {
+            setIsEvaluatorTutorialOpen(true);
+          }
+        }}
+        onToggleHelpMode={() => setIsHelpModeActive((prev) => !prev)}
+        isHelpModeActive={isHelpModeActive}
       />
 
       {/* Main View Container */}
@@ -300,6 +314,12 @@ export default function App() {
                 initialCampaign={activeCompany}
                 onLogout={handleLogoutCompany}
                 onLaunchEvaluation={handleLaunchEvaluationFromCoordinator}
+                isTutorialOpenExternal={isCompanyTutorialOpen}
+                onCloseTutorialExternal={() => setIsCompanyTutorialOpen(false)}
+                onOpenTutorialExternal={() => setIsCompanyTutorialOpen(true)}
+                isHelpModeActiveExternal={isHelpModeActive}
+                onToggleHelpModeExternal={() => setIsHelpModeActive((prev) => !prev)}
+                onSetHelpModeActiveExternal={setIsHelpModeActive}
               />
             )}
 
@@ -309,6 +329,9 @@ export default function App() {
                 evaluatorSubjectId={evaluatorSubjectId}
                 evaluatorCompanyId={evaluatorCompanyId}
                 onNavigateHome={() => setCurrentView('client_welcome')}
+                isTutorialOpenExternal={isEvaluatorTutorialOpen}
+                onCloseTutorialExternal={() => setIsEvaluatorTutorialOpen(false)}
+                onOpenTutorialExternal={() => setIsEvaluatorTutorialOpen(true)}
               />
             )}
 
